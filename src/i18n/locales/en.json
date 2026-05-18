@@ -545,7 +545,7 @@
     "problem_filter_only": "Only show problematic credentials",
     "disabled_filter_only": "Only show disabled credentials",
     "unauthorized_filter_only": "Only show 401 credentials",
-    "auth_error_filter_only": "Only show 401 / 403 credentials",
+    "auth_error_filter_only": "Only show auth-error credentials",
     "usage_limit_filter_only": "Only show usage-limited credentials",
     "advanced_filters_label": "Advanced filters",
     "advanced_filters_hint": "Only conditions that change which credentials are shown.",
