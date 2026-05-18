@@ -5,7 +5,31 @@ export type AuthFilesSortMode = (typeof AUTH_FILES_SORT_MODES)[number];
 export type AuthFilesUiState = {
   filter?: string;
   problemOnly?: boolean;
+  noIssueOnly?: boolean;
   disabledOnly?: boolean;
+  enabledOnly?: boolean;
+  authErrorOnly?: boolean;
+  unauthorizedOnly?: boolean;
+  probeResultFilter?:
+    | 'all'
+    | 'success'
+    | 'error'
+    | 'auth-error'
+    | '401'
+    | '403'
+    | 'usage-limit'
+    | 'skipped'
+    | 'unprobed';
+  runtimeFilter?: 'all' | 'file' | 'runtime';
+  authIndexFilter?: 'all' | 'yes' | 'no';
+  priorityFilter?: 'all' | 'yes' | 'no';
+  noteFilter?: 'all' | 'yes' | 'no';
+  prefixFilter?: 'all' | 'yes' | 'no';
+  proxyFilter?: 'all' | 'yes' | 'no';
+  headersFilter?: 'all' | 'yes' | 'no';
+  successMinInput?: string;
+  failureMinInput?: string;
+  sizeMinKbInput?: string;
   compactMode?: boolean;
   search?: string;
   page?: number;

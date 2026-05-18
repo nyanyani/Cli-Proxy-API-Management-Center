@@ -25,6 +25,7 @@ import {
   formatModified,
   getAuthFileIcon,
   getAuthFileStatusMessage,
+  formatAuthFileStatusMessage,
   getTypeColor,
   getTypeLabel,
   isRuntimeOnlyAuthFile,
@@ -120,6 +121,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
     (authIndexKey && statusBarCache.get(authIndexKey)) ||
     statusBarDataFromRecentRequests(recentBuckets);
   const rawStatusMessage = getAuthFileStatusMessage(file);
+  const displayStatusMessage = formatAuthFileStatusMessage(rawStatusMessage);
   const hasStatusWarning =
     Boolean(rawStatusMessage) && !HEALTHY_STATUS_MESSAGES.has(rawStatusMessage.toLowerCase());
 
@@ -226,7 +228,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
           {rawStatusMessage && hasStatusWarning && (
             <div className={styles.healthStatusMessage} title={rawStatusMessage}>
               <IconInfo className={styles.messageIcon} size={14} />
-              <span>{rawStatusMessage}</span>
+              <span>{displayStatusMessage}</span>
             </div>
           )}
 
