@@ -247,33 +247,23 @@
 
 // 卡片渐变背景 — 基于 TYPE_COLORS light.bg 转 rgba
 .claudeCard {
-  background-image: linear-gradient(180deg,
-      rgba(251, 236, 228, 0.18),
-      rgba(251, 236, 228, 0));
+  background-image: linear-gradient(180deg, rgba(251, 236, 228, 0.18), rgba(251, 236, 228, 0));
 }
 
 .antigravityCard {
-  background-image: linear-gradient(180deg,
-      rgba(224, 247, 250, 0.12),
-      rgba(224, 247, 250, 0));
+  background-image: linear-gradient(180deg, rgba(224, 247, 250, 0.12), rgba(224, 247, 250, 0));
 }
 
 .codexCard {
-  background-image: linear-gradient(180deg,
-      rgba(234, 231, 255, 0.18),
-      rgba(234, 231, 255, 0));
+  background-image: linear-gradient(180deg, rgba(234, 231, 255, 0.18), rgba(234, 231, 255, 0));
 }
 
 .geminiCliCard {
-  background-image: linear-gradient(180deg,
-      rgba(224, 232, 255, 0.2),
-      rgba(224, 232, 255, 0));
+  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.2), rgba(224, 232, 255, 0));
 }
 
 .kimiCard {
-  background-image: linear-gradient(180deg,
-      rgba(220, 232, 255, 0.2),
-      rgba(220, 232, 255, 0));
+  background-image: linear-gradient(180deg, rgba(220, 232, 255, 0.2), rgba(220, 232, 255, 0));
 }
 
 .quotaSection {
@@ -636,7 +626,10 @@
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
-  transition: transform $transition-fast, box-shadow $transition-fast, border-color $transition-fast;
+  transition:
+    transform $transition-fast,
+    box-shadow $transition-fast,
+    border-color $transition-fast;
 
   &:hover {
     transform: translateY(-2px);
@@ -674,9 +667,38 @@
   justify-content: center;
   align-items: center;
   gap: $spacing-md;
+  flex-wrap: wrap;
   margin-top: $spacing-lg;
   padding-top: $spacing-md;
   border-top: 1px solid var(--border-color);
+}
+
+.paginationField {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.paginationInput {
+  width: 72px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  border-radius: 8px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 12%, transparent);
+  }
 }
 
 .pageInfo {
