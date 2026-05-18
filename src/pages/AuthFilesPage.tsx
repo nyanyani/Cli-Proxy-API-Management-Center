@@ -189,6 +189,20 @@ const hasUsageLimitReached = (value: unknown) => {
   );
 };
 
+const hasAuthUnavailableError = (value: unknown) => {
+  const normalizedMessage = getUsageLimitText(value).toLowerCase();
+  return (
+    normalizedMessage.includes('authentication_error') ||
+    normalizedMessage.includes('auth_unavailable') ||
+    normalizedMessage.includes('authentication token has been invalidated')
+  );
+};
+
+const hasAuthError = (file: AuthFileItem, probe: AuthFileProbeState | undefined) =>
+  [401, 403].includes(probe?.statusCode ?? 0) ||
+  hasAuthUnavailableError(file) ||
+  hasAuthUnavailableError(probe);
+
 const parseMinNumber = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -804,12 +818,13 @@ export function AuthFilesPage() {
       if (
         authErrorOnly &&
         probeResultFilter === 'all' &&
-        ![401, 403].includes(probe?.statusCode ?? 0)
+        !hasAuthError(file, probe)
       ) {
         return false;
       }
       if (probeResultFilter === 'success' && probe?.status !== 'success') return false;
       if (probeResultFilter === 'error' && probe?.status !== 'error') return false;
+      if (probeResultFilter === 'auth-error' && !hasAuthError(file, probe)) return false;
       if (probeResultFilter === '401' && probe?.statusCode !== 401) return false;
       if (probeResultFilter === '403' && probe?.statusCode !== 403) return false;
       if (

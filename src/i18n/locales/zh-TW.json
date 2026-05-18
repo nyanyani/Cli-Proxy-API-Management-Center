@@ -545,7 +545,7 @@
     "problem_filter_only": "僅顯示有問題憑證",
     "disabled_filter_only": "僅顯示已停用憑證",
     "unauthorized_filter_only": "僅顯示 401 憑證",
-    "auth_error_filter_only": "僅顯示 401 / 403 憑證",
+    "auth_error_filter_only": "僅顯示認證錯誤憑證",
     "usage_limit_filter_only": "僅顯示用量受限憑證",
     "advanced_filters_label": "進階篩選",
     "advanced_filters_hint": "这里只放會改變憑證顯示範圍的條件。",
