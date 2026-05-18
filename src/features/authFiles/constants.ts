@@ -35,7 +35,7 @@ export const QUOTA_PROVIDER_TYPES = new Set<QuotaProviderType>([
 ]);
 
 export const MIN_CARD_PAGE_SIZE = 3;
-export const MAX_CARD_PAGE_SIZE = 30;
+export const DEFAULT_CARD_PAGE_SIZE = 30;
 export const AUTH_FILE_REFRESH_WARNING_MS = 24 * 60 * 60 * 1000;
 
 export const INTEGER_STRING_PATTERN = /^[+-]?\d+$/;
@@ -123,8 +123,7 @@ export const AUTH_FILE_ICONS: Record<string, AuthFileIconAsset> = {
   vertex: iconVertex,
 };
 
-export const clampCardPageSize = (value: number) =>
-  Math.min(MAX_CARD_PAGE_SIZE, Math.max(MIN_CARD_PAGE_SIZE, Math.round(value)));
+export const clampCardPageSize = (value: number) => Math.max(MIN_CARD_PAGE_SIZE, Math.round(value));
 
 export const resolveQuotaErrorMessage = (
   t: TFunction,
@@ -147,6 +146,58 @@ export const getAuthFileStatusMessage = (file: AuthFileItem): string => {
   if (typeof raw === 'string') return raw.trim();
   if (raw == null) return '';
   return String(raw).trim();
+};
+
+const formatUsageLimitDuration = (totalSeconds: number): string => {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
+
+const readNumericStatusField = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const formatAuthFileStatusMessage = (message: string): string => {
+  const trimmed = message.trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const root = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    const error = root?.error && typeof root.error === 'object'
+      ? (root.error as Record<string, unknown>)
+      : null;
+    if (!error || error.type !== 'usage_limit_reached') return trimmed;
+
+    const resetEpoch = readNumericStatusField(error.resets_at);
+    const resetInSeconds = readNumericStatusField(error.resets_in_seconds);
+    const resetDate = resetEpoch
+      ? new Date(resetEpoch > 1_000_000_000_000 ? resetEpoch : resetEpoch * 1000)
+      : null;
+    const secondsUntilReset =
+      resetInSeconds ??
+      (resetDate ? Math.max(0, Math.round((resetDate.getTime() - Date.now()) / 1000)) : null);
+    const resetParts: string[] = [];
+    if (resetDate) resetParts.push(resetDate.toLocaleString());
+    if (secondsUntilReset !== null) resetParts.push(`in ${formatUsageLimitDuration(secondsUntilReset)}`);
+
+    const baseMessage =
+      typeof error.message === 'string' && error.message.trim()
+        ? error.message.trim()
+        : 'Usage limit reached';
+    return resetParts.length > 0 ? `${baseMessage} · resets ${resetParts.join(' · ')}` : baseMessage;
+  } catch {
+    return trimmed;
+  }
 };
 
 export const hasAuthFileStatusMessage = (file: AuthFileItem): boolean =>
@@ -247,7 +298,7 @@ export const formatModified = (item: AuthFileItem): string => {
   const date =
     Number.isFinite(asNumber) && !Number.isNaN(asNumber)
       ? new Date(asNumber < 1e12 ? asNumber * 1000 : asNumber)
-      : parseTimestamp(raw) ?? new Date(String(raw));
+      : (parseTimestamp(raw) ?? new Date(String(raw)));
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
 };
 

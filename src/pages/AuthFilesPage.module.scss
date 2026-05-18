@@ -100,7 +100,6 @@
   }
 }
 
-
 .filterAllIconWrap {
   position: relative;
   border-color: color-mix(in srgb, var(--primary-color) 20%, var(--border-color));
@@ -117,14 +116,6 @@
   z-index: 1;
   display: block;
   color: color-mix(in srgb, var(--primary-color) 70%, var(--text-primary));
-}
-
-
-.filterContent {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-md;
-  min-width: 0;
 }
 
 .filterTags {
@@ -231,16 +222,16 @@
   color: var(--filter-color);
 }
 
-.filterControlsPanel {
+.primaryFiltersPanel {
   padding: 14px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
 }
 
-.filterControls {
+.primaryFilters {
   display: grid;
-  grid-template-columns: minmax(240px, 1.4fr) repeat(2, minmax(120px, 0.72fr)) minmax(220px, auto);
+  grid-template-columns: minmax(260px, 1.4fr) repeat(3, minmax(150px, 1fr));
   gap: $spacing-md;
   align-items: flex-end;
 
@@ -255,12 +246,40 @@
   }
 
   @include tablet {
-    grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(140px, 0.8fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   @include mobile {
     grid-template-columns: 1fr;
   }
+}
+
+.viewControlsPanel {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 30%, transparent);
+}
+
+.viewControls {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(96px, 120px) minmax(180px, 1fr);
+  gap: $spacing-md;
+  align-items: flex-end;
+
+  @include tablet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.viewToggleControl {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
 }
 
 .filterItem {
@@ -279,29 +298,133 @@
   }
 }
 
-.filterToggleItem {
+.advancedFiltersPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 62%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-secondary) 72%, var(--primary-color) 4%),
+    color-mix(in srgb, var(--bg-secondary) 52%, transparent)
+  );
+}
+
+.contentSection {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-lg;
+  min-width: 0;
+}
+
+.advancedFiltersHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
   min-width: 0;
 
-  @include tablet {
-    grid-column: 1 / -1;
+  @include mobile {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 
-.filterToggleGroup {
-  display: grid;
-  grid-template-columns: 1fr;
+.advancedFiltersTitle {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
-  min-height: 40px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
 }
 
-.filterToggleCard {
+.advancedFiltersCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-color) 14%, var(--bg-secondary));
+  color: color-mix(in srgb, var(--primary-color) 80%, var(--text-primary));
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.advancedFiltersHint {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.advancedFiltersGroup {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+
+  @include tablet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.probePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 58%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 42%, transparent);
+}
+
+.probePanelHeader {
   display: flex;
   align-items: center;
-  min-height: 40px;
-  padding: 0 2px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
-  background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
+  justify-content: space-between;
+  gap: $spacing-md;
+
+  @include mobile {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.probePanelTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.probePanelHint {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.advancedFilterField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+
+  label {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
 }
 
 .filterToggle {
@@ -1526,6 +1649,64 @@
   margin-top: $spacing-lg;
   padding-top: $spacing-md;
   border-top: 1px solid var(--border-color);
+}
+
+.paginationField {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.paginationInput {
+  width: 72px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+  border-radius: 8px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 12%, transparent);
+  }
+}
+
+.probeStatusPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 20%, var(--border-color));
+  background: color-mix(in srgb, var(--primary-color) 6%, var(--bg-secondary));
+}
+
+.probeStatusText {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.probeProgressTrack {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border-color) 55%, transparent);
+}
+
+.probeProgressFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary-color);
+  transition: width $transition-fast;
 }
 
 .batchActionContainer {

@@ -2,7 +2,7 @@
  * Generic quota section component.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -25,8 +25,8 @@ type QuotaSetter<T> = (updater: QuotaUpdater<T>) => void;
 
 type ViewMode = 'paged' | 'all';
 
-const MAX_ITEMS_PER_PAGE = 25;
 const MAX_SHOW_ALL_THRESHOLD = 30;
+const MIN_ITEMS_PER_PAGE = 1;
 
 interface QuotaPaginationState<T> {
   pageSize: number;
@@ -34,6 +34,7 @@ interface QuotaPaginationState<T> {
   currentPage: number;
   pageItems: T[];
   setPageSize: (size: number) => void;
+  setPage: (page: number) => void;
   goToPrev: () => void;
   goToNext: () => void;
   loading: boolean;
@@ -41,7 +42,10 @@ interface QuotaPaginationState<T> {
   setLoading: (loading: boolean, scope?: 'page' | 'all' | null) => void;
 }
 
-const useQuotaPagination = <T,>(items: T[], defaultPageSize = 6): QuotaPaginationState<T> => {
+const useQuotaPagination = <T,>(
+  items: T[],
+  defaultPageSize = MAX_SHOW_ALL_THRESHOLD
+): QuotaPaginationState<T> => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSizeState] = useState(defaultPageSize);
   const [loading, setLoadingState] = useState(false);
@@ -60,9 +64,16 @@ const useQuotaPagination = <T,>(items: T[], defaultPageSize = 6): QuotaPaginatio
   }, [items, currentPage, pageSize]);
 
   const setPageSize = useCallback((size: number) => {
-    setPageSizeState(size);
+    setPageSizeState(Math.max(MIN_ITEMS_PER_PAGE, Math.round(size)));
     setPage(1);
   }, []);
+
+  const setSafePage = useCallback(
+    (nextPage: number) => {
+      setPage(Math.min(totalPages, Math.max(1, Math.round(nextPage))));
+    },
+    [totalPages]
+  );
 
   const goToPrev = useCallback(() => {
     setPage((prev) => Math.max(1, prev - 1));
@@ -83,11 +94,12 @@ const useQuotaPagination = <T,>(items: T[], defaultPageSize = 6): QuotaPaginatio
     currentPage,
     pageItems,
     setPageSize,
+    setPage: setSafePage,
     goToPrev,
     goToNext,
     loading,
     loadingScope,
-    setLoading
+    setLoading,
   };
 };
 
@@ -102,7 +114,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   config,
   files,
   loading,
-  disabled
+  disabled,
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -112,14 +124,16 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   >;
 
   /* Removed useRef */
-  const [columns, gridRef] = useGridColumns(380); // Min card width 380px matches SCSS
+  const [, gridRef] = useGridColumns(380); // Min card width 380px matches SCSS
   const [viewMode, setViewMode] = useState<ViewMode>('paged');
   const [showTooManyWarning, setShowTooManyWarning] = useState(false);
+  const [pageInput, setPageInput] = useState('1');
+  const [pageSizeInput, setPageSizeInput] = useState(String(MAX_SHOW_ALL_THRESHOLD));
 
-  const filteredFiles = useMemo(() => files.filter((file) => config.filterFn(file)), [
-    files,
-    config
-  ]);
+  const filteredFiles = useMemo(
+    () => files.filter((file) => config.filterFn(file)),
+    [files, config]
+  );
   const showAllAllowed = filteredFiles.length <= MAX_SHOW_ALL_THRESHOLD;
   const effectiveViewMode: ViewMode = viewMode === 'all' && !showAllAllowed ? 'paged' : viewMode;
 
@@ -129,11 +143,20 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     currentPage,
     pageItems,
     setPageSize,
+    setPage,
     goToPrev,
     goToNext,
     loading: sectionLoading,
-    setLoading
+    setLoading,
   } = useQuotaPagination(filteredFiles);
+
+  useEffect(() => {
+    setPageInput(String(currentPage));
+  }, [currentPage]);
+
+  useEffect(() => {
+    setPageSizeInput(String(pageSize));
+  }, [pageSize]);
 
   useEffect(() => {
     if (showAllAllowed) return;
@@ -156,10 +179,44 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     if (effectiveViewMode === 'all') {
       setPageSize(Math.max(1, filteredFiles.length));
     } else {
-      // Paged mode: 3 rows * columns, capped to avoid oversized pages.
-      setPageSize(Math.min(columns * 3, MAX_ITEMS_PER_PAGE));
+      // Paged mode defaults to the same safe threshold used by Show All.
+      setPageSize(MAX_SHOW_ALL_THRESHOLD);
     }
-  }, [effectiveViewMode, columns, filteredFiles.length, setPageSize]);
+  }, [effectiveViewMode, filteredFiles.length, setPageSize]);
+
+  const commitPageInput = (rawValue: string) => {
+    const value = Number(rawValue.trim());
+    if (!Number.isFinite(value)) {
+      setPageInput(String(currentPage));
+      return;
+    }
+    setPage(value);
+  };
+
+  const handlePageInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const rawValue = event.currentTarget.value;
+    setPageInput(rawValue);
+    const value = Number(rawValue.trim());
+    if (!Number.isFinite(value) || value < 1 || value > totalPages) return;
+    setPage(value);
+  };
+
+  const commitPageSizeInput = (rawValue: string) => {
+    const value = Number(rawValue.trim());
+    if (!Number.isFinite(value)) {
+      setPageSizeInput(String(pageSize));
+      return;
+    }
+    setPageSize(value);
+  };
+
+  const handlePageSizeInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const rawValue = event.currentTarget.value;
+    setPageSizeInput(rawValue);
+    const value = Number(rawValue.trim());
+    if (!Number.isFinite(value) || value < MIN_ITEMS_PER_PAGE) return;
+    setPageSize(value);
+  };
 
   const { quota, loadQuota } = useQuotaLoader(config);
 
@@ -211,14 +268,14 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
 
       setQuota((prev) => ({
         ...prev,
-        [file.name]: config.buildLoadingState()
+        [file.name]: config.buildLoadingState(),
       }));
 
       try {
         const data = await config.fetchQuota(file, t);
         setQuota((prev) => ({
           ...prev,
-          [file.name]: config.buildSuccessState(data)
+          [file.name]: config.buildSuccessState(data),
         }));
         showNotification(t('auth_files.quota_refresh_success', { name: file.name }), 'success');
       } catch (err: unknown) {
@@ -226,7 +283,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
         const status = getStatusFromError(err);
         setQuota((prev) => ({
           ...prev,
-          [file.name]: config.buildErrorState(message, status)
+          [file.name]: config.buildErrorState(message, status),
         }));
         showNotification(
           t('auth_files.quota_refresh_failed', { name: file.name, message }),
@@ -241,14 +298,14 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
     <div className={styles.titleWrapper}>
       <span>{t(`${config.i18nPrefix}.title`)}</span>
       {filteredFiles.length > 0 && (
-        <span className={styles.countBadge}>
-          {filteredFiles.length}
-        </span>
+        <span className={styles.countBadge}>{filteredFiles.length}</span>
       )}
     </div>
   );
 
   const isRefreshing = sectionLoading || loading;
+  const start = (currentPage - 1) * pageSize;
+  const end = Math.min(filteredFiles.length, start + pageSize);
 
   return (
     <Card
@@ -323,23 +380,55 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
               />
             ))}
           </div>
-          {filteredFiles.length > pageSize && effectiveViewMode === 'paged' && (
+          {effectiveViewMode === 'paged' && filteredFiles.length > 0 && (
             <div className={styles.pagination}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={goToPrev}
-                disabled={currentPage <= 1}
-              >
+              <Button variant="secondary" size="sm" onClick={goToPrev} disabled={currentPage <= 1}>
                 {t('auth_files.pagination_prev')}
               </Button>
               <div className={styles.pageInfo}>
-                {t('auth_files.pagination_info', {
+                {t('auth_files.pagination_range_info', {
                   current: currentPage,
                   total: totalPages,
-                  count: filteredFiles.length
+                  count: filteredFiles.length,
+                  start: start + 1,
+                  end,
                 })}
               </div>
+              <label className={styles.paginationField}>
+                <span>{t('auth_files.pagination_page_label')}</span>
+                <input
+                  className={styles.paginationInput}
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  step={1}
+                  value={pageInput}
+                  onChange={handlePageInputChange}
+                  onBlur={(e) => commitPageInput(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+              </label>
+              <label className={styles.paginationField}>
+                <span>{t('auth_files.pagination_page_size_label')}</span>
+                <input
+                  className={styles.paginationInput}
+                  type="number"
+                  min={MIN_ITEMS_PER_PAGE}
+                  step={1}
+                  value={pageSizeInput}
+                  onChange={handlePageSizeInputChange}
+                  onBlur={(e) => commitPageSizeInput(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+              </label>
               <Button
                 variant="secondary"
                 size="sm"
