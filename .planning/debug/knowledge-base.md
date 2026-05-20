@@ -35,3 +35,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Removed the live plan-priority order type/state/persistence/toggle UI from AuthFilesPage and uiState, restored priority sort to use only the auth-file `priority` value that is edited through Auth File Details / Edit, and removed stale `plan_priority_*` locale keys.
 - **Files changed:** src/pages/AuthFilesPage.tsx, src/features/authFiles/uiState.ts, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json
 ---
+
+## probe-result-should-update-the — Probe results did not update quota cards
+- **Date:** 2026-05-20
+- **Error patterns:** probe result, quota card, quota cards, disabled credentials, Auth Files, quota state
+- **Root cause:** Probe-to-quota updates reused quota config filterFn predicates as provider resolvers. Those predicates are UI visibility filters that exclude disabled files, while probeCredentials includes disabled files when probing all/disabled targets. As a result, getProbeQuotaConfig returned null and skipped quota store updates for disabled probed files.
+- **Fix:** Changed getProbeQuotaConfig in AuthFilesPage to resolve quota config by normalized provider instead of quota-list filterFn, while preserving runtime-only exclusion for Gemini CLI.
+- **Files changed:** src/pages/AuthFilesPage.tsx
+---
