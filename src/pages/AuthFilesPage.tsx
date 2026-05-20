@@ -108,14 +108,6 @@ type FailedProbeQuotaTarget = {
   status?: number;
 };
 
-const QUOTA_CONFIGS: ProbeQuotaConfig[] = [
-  CLAUDE_CONFIG as ProbeQuotaConfig,
-  ANTIGRAVITY_CONFIG as ProbeQuotaConfig,
-  CODEX_CONFIG as ProbeQuotaConfig,
-  GEMINI_CLI_CONFIG as ProbeQuotaConfig,
-  KIMI_CONFIG as ProbeQuotaConfig,
-];
-
 type TernaryFilter = 'all' | 'yes' | 'no';
 type RuntimeFilter = 'all' | 'file' | 'runtime';
 type ProbeFilter =
@@ -319,7 +311,17 @@ const buildProbeRequest = (file: AuthFileItem, authIndex: string): ApiCallReques
 };
 
 const getProbeQuotaConfig = (file: AuthFileItem): ProbeQuotaConfig | null => {
-  return QUOTA_CONFIGS.find((config) => config.filterFn(file)) ?? null;
+  const provider = normalizeProbeProvider(file);
+
+  if (provider === 'claude') return CLAUDE_CONFIG as ProbeQuotaConfig;
+  if (provider === 'antigravity') return ANTIGRAVITY_CONFIG as ProbeQuotaConfig;
+  if (provider === 'codex') return CODEX_CONFIG as ProbeQuotaConfig;
+  if (provider === 'gemini-cli' && !isRuntimeOnlyAuthFile(file)) {
+    return GEMINI_CLI_CONFIG as ProbeQuotaConfig;
+  }
+  if (provider === 'kimi') return KIMI_CONFIG as ProbeQuotaConfig;
+
+  return null;
 };
 
 const isTransientProbeStatus = (status: number | undefined) =>
