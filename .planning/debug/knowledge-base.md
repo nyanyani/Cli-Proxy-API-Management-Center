@@ -51,3 +51,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Added persisted `clearSelectionOnFilterChange` Auth Files UI option, a shared `commitFilterChange` helper that clears selection only when enabled and the filter value changes, wired filter/search handlers through it, and added locale labels.
 - **Files changed:** src/pages/AuthFilesPage.tsx, src/features/authFiles/uiState.ts, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json
 ---
+
+## i-selected-the-no-detected-pla — Probe selected left successfully detected files under No detected plan
+- **Date:** 2026-05-20
+- **Error patterns:** No detected plan, probe selected, auth files left, Probe cache, plan_type free, API-call envelope body
+- **Root cause:** The No detected plan workflow had multiple missing plan-normalization paths. AuthFilesPage ignored Gemini CLI quota tier identifiers, and Codex/OpenAI quota parsing returned API-call envelope objects directly without parsing the nested JSON `body` that contained `plan_type='free'`.
+- **Fix:** Added quota `tierId`/`tier_id` fields to AuthFilesPage plan resolution and updated `parseCodexUsagePayload` to unwrap nested API-call envelope body payloads before deriving Codex planType.
+- **Files changed:** src/pages/AuthFilesPage.tsx, src/utils/quota/parsers.ts
+---
