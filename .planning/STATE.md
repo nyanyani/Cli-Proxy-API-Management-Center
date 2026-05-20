@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-05-20)
 Phase: 1 of 1 (Auth Files Batch Priority)
 Plan: 1 of 1 in current phase
 Status: Ready to plan
-Last activity: 2026-05-20 — Completed quick task 260520-r3b large-auth-file-list.
+Last activity: 2026-05-20 — Corrected quick task 260520-r3b large-auth-file-list.
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -39,9 +39,9 @@ _Updated after each plan completion_
 
 ## Quick Tasks Completed
 
-| Date | Quick ID | Task | Summary | Commit |
-| ---- | -------- | ---- | ------- | ------ |
-| 2026-05-20 | 260520-r3b | large-auth-file-list | Auth Files list enrichment now uses one wildcard `/auth-files/download?name=*` request and whitelisted metadata merges instead of per-file download fan-out. | `4d8175e` |
+| Date       | Quick ID   | Task                 | Summary                                                                                                                                            | Commit    |
+| ---------- | ---------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 2026-05-20 | 260520-r3b | large-auth-file-list | Auth Files list loading no longer sends per-file download fan-out for large missing-metadata lists and never sends `*` as a literal download name. | `bd57fc7` |
 
 ## Accumulated Context
 
@@ -69,6 +69,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-20 11:37
-Stopped at: Completed quick task 260520-r3b large-auth-file-list.
+Last session: 2026-05-20 11:50
+Stopped at: Corrected quick task 260520-r3b large-auth-file-list.
 Resume file: None
