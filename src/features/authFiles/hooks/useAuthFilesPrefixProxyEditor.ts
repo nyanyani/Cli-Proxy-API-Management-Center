@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { authFilesApi, type AuthFileFieldsPatch } from '@/services/api';
+import {
+  authFilesApi,
+  omitAuthFileInternalMetadata,
+  type AuthFileFieldsPatch,
+} from '@/services/api';
 import type { AuthFileItem } from '@/types';
 import { useNotificationStore } from '@/stores';
 import { parsePriorityValue } from '@/features/authFiles/constants';
@@ -296,7 +300,7 @@ export function useAuthFilesPrefixProxyEditor(
 
     setPrefixProxyEditor({
       fileName: name,
-      fileInfoText: JSON.stringify(file, null, 2),
+      fileInfoText: JSON.stringify(omitAuthFileInternalMetadata(file), null, 2),
       loading: true,
       saving: false,
       error: null,
@@ -348,7 +352,7 @@ export function useAuthFilesPrefixProxyEditor(
         return;
       }
 
-      const json = { ...(parsed as Record<string, unknown>) };
+      const json = omitAuthFileInternalMetadata(parsed as Record<string, unknown>);
       const originalText = JSON.stringify(json);
       const prefix = typeof json.prefix === 'string' ? json.prefix : '';
       const proxyUrl = typeof json.proxy_url === 'string' ? json.proxy_url : '';

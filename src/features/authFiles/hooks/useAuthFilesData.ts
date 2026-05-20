@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { authFilesApi } from '@/services/api';
-import { apiClient } from '@/services/api/client';
 import { useNotificationStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { formatFileSize } from '@/utils/format';
@@ -412,11 +411,8 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
   const handleDownload = useCallback(
     async (name: string) => {
       try {
-        const response = await apiClient.getRaw(
-          `/auth-files/download?name=${encodeURIComponent(name)}`,
-          { responseType: 'blob' }
-        );
-        const blob = new Blob([response.data]);
+        const publicText = await authFilesApi.downloadPublicText(name);
+        const blob = new Blob([publicText], { type: 'application/json' });
         downloadBlob({ filename: name, blob });
         showNotification(t('auth_files.download_success'), 'success');
       } catch (err: unknown) {
@@ -567,11 +563,8 @@ export function useAuthFilesData(): UseAuthFilesDataResult {
 
       for (const name of uniqueNames) {
         try {
-          const response = await apiClient.getRaw(
-            `/auth-files/download?name=${encodeURIComponent(name)}`,
-            { responseType: 'blob' }
-          );
-          const blob = new Blob([response.data]);
+          const publicText = await authFilesApi.downloadPublicText(name);
+          const blob = new Blob([publicText], { type: 'application/json' });
           downloadBlob({ filename: name, blob });
           successCount++;
         } catch {
