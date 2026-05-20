@@ -168,8 +168,13 @@ export function parseCodexUsagePayload(payload: unknown): CodexUsagePayload | nu
       return null;
     }
   }
-  if (typeof payload === 'object') {
-    return payload as CodexUsagePayload;
+  if (typeof payload === 'object' && !Array.isArray(payload)) {
+    const record = payload as Record<string, unknown>;
+    if (!('plan_type' in record) && !('planType' in record) && 'body' in record) {
+      const nested = parseCodexUsagePayload(record.body);
+      if (nested) return nested;
+    }
+    return record as CodexUsagePayload;
   }
   return null;
 }
