@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-05-20)
 Phase: 1 of 1 (Auth Files Batch Priority)
 Plan: 1 of 1 in current phase
 Status: Ready to plan
-Last activity: 2026-05-20 — Repaired partial GSD initialization after PROJECT.md synthesis failed.
+Last activity: 2026-05-20 — Completed quick task 260520-r3b large-auth-file-list.
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -36,6 +36,12 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: Stable
 
 _Updated after each plan completion_
+
+## Quick Tasks Completed
+
+| Date | Quick ID | Task | Summary | Commit |
+| ---- | -------- | ---- | ------- | ------ |
+| 2026-05-20 | 260520-r3b | large-auth-file-list | Auth Files list enrichment now uses one wildcard `/auth-files/download?name=*` request and whitelisted metadata merges instead of per-file download fan-out. | `4d8175e` |
 
 ## Accumulated Context
 
@@ -63,6 +69,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-20 10:51
-Stopped at: GSD project state repaired after partial `gsd-sdk init` failure.
+Last session: 2026-05-20 11:37
+Stopped at: Completed quick task 260520-r3b large-auth-file-list.
 Resume file: None
