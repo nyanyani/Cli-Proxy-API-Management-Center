@@ -59,3 +59,19 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Added quota `tierId`/`tier_id` fields to AuthFilesPage plan resolution and updated `parseCodexUsagePayload` to unwrap nested API-call envelope body payloads before deriving Codex planType.
 - **Files changed:** src/pages/AuthFilesPage.tsx, src/utils/quota/parsers.ts
 ---
+
+## probe-didnt-retry-502 — Probe retried 502 responses then surfaced final failure
+- **Date:** 2026-05-20
+- **Error patterns:** probe didn't retry, 502 Bad Gateway, request failed, credential probe, three attempts
+- **Root cause:** The UI did not skip retrying. Current AuthFilesPage retries probe HTTP/api-call 502/503/504 responses up to PROBE_MAX_ATTEMPTS=3; the real failing workflow made all three attempts and then surfaced the final 502 after retry exhaustion.
+- **Fix:** No source-code change required for the reported "didn't retry" symptom. Existing implementation already retries thrown ApiError.status 502 and api-call result statusCode 502 up to PROBE_MAX_ATTEMPTS=3.
+- **Files changed:** .planning/debug/resolved/probe-didnt-retry-502.md
+---
+
+## probe-selected-did-not-update — Probe selected quota and plan updates did not persist
+- **Date:** 2026-05-20
+- **Error patterns:** Probe selected, quota, Plan type, did not update, did not persist, refresh, reload, re-fetch, No detected plan, Gemini CLI, probe_quota
+- **Root cause:** Probe selected originally refreshed volatile quota store state only. After adding persistence, Gemini CLI still failed because its detected tier/plan metadata was produced by an asynchronous loadCodeAssist side-channel after fetchGeminiCliQuota returned; the persistence step captured and saved the earlier quota state where tierLabel/tierId were null, leaving the auth file classified as "No detected plan".
+- **Fix:** Added a post-quota-refresh persistence step in AuthFilesPage that writes compact probe_quota metadata plus top-level plan_type/tier_id/tier_label/credit_balance fields into each successful auth file JSON via authFilesApi.downloadJsonObject/saveJsonObject. Also changed Gemini CLI quota fetching to await loadCodeAssist tier metadata before returning the success state. Added probe_quota readback so resolvePlanTypeForFile checks persisted probe_quota metadata/data, AuthFilesPage quota-state lookup falls back to probe_quota.data after reload, and AuthFileQuotaSection displays persisted probe quota data when useQuotaStore is empty.
+- **Files changed:** src/pages/AuthFilesPage.tsx, src/components/quota/quotaConfigs.ts, src/features/authFiles/components/AuthFileQuotaSection.tsx
+---
