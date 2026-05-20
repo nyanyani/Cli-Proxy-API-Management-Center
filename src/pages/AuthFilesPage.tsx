@@ -470,6 +470,7 @@ export function AuthFilesPage() {
   const [sizeMinKbInput, setSizeMinKbInput] = useState('');
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [compactMode, setCompactMode] = useState(false);
+  const [clearSelectionOnFilterChange, setClearSelectionOnFilterChange] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSizeByMode, setPageSizeByMode] = useState({
@@ -651,6 +652,9 @@ export function AuthFilesPage() {
       if (typeof persistedCompactMode !== 'boolean' && typeof persisted.compactMode === 'boolean') {
         setCompactMode(persisted.compactMode);
       }
+      if (typeof persisted.clearSelectionOnFilterChange === 'boolean') {
+        setClearSelectionOnFilterChange(persisted.clearSelectionOnFilterChange);
+      }
       if (typeof persisted.search === 'string') {
         setSearch(persisted.search);
       }
@@ -704,6 +708,7 @@ export function AuthFilesPage() {
       failureMinInput,
       sizeMinKbInput,
       compactMode,
+      clearSelectionOnFilterChange,
       search,
       page,
       pageSize,
@@ -713,6 +718,7 @@ export function AuthFilesPage() {
     });
     writePersistedAuthFilesCompactMode(compactMode);
   }, [
+    clearSelectionOnFilterChange,
     compactMode,
     disabledOnly,
     enabledOnly,
@@ -796,6 +802,18 @@ export function AuthFilesPage() {
       void loadFiles().catch(() => {});
     },
     [loadFiles, sortMode]
+  );
+
+  const commitFilterChange = useCallback(
+    (changed: boolean, applyChange: () => void) => {
+      if (!changed) return;
+      applyChange();
+      setPage(1);
+      if (clearSelectionOnFilterChange && selectionCountRef.current > 0) {
+        deselectAll();
+      }
+    },
+    [clearSelectionOnFilterChange, deselectAll]
   );
 
   const handleHeaderRefresh = useCallback(async () => {
@@ -990,9 +1008,10 @@ export function AuthFilesPage() {
 
   const handleProbeFilterChange = (value: string) => {
     const next = value as ProbeFilter;
-    setProbeResultFilter(next);
-    setAuthErrorOnly(['auth-error', '401', '403'].includes(next));
-    setPage(1);
+    commitFilterChange(next !== probeResultFilter, () => {
+      setProbeResultFilter(next);
+      setAuthErrorOnly(['auth-error', '401', '403'].includes(next));
+    });
   };
 
   const advancedFilterCount = useMemo(
@@ -1421,8 +1440,7 @@ export function AuthFilesPage() {
               className={`${styles.filterTag} ${isActive ? styles.filterTagActive : ''}`}
               style={buttonStyle}
               onClick={() => {
-                setFilter(type);
-                setPage(1);
+                commitFilterChange(normalizedFilter !== type, () => setFilter(type));
               }}
             >
               <span className={styles.filterTagLabel}>
@@ -1573,8 +1591,8 @@ export function AuthFilesPage() {
                 <Input
                   value={search}
                   onChange={(e) => {
-                    setSearch(e.target.value);
-                    setPage(1);
+                    const next = e.target.value;
+                    commitFilterChange(next !== search, () => setSearch(next));
                   }}
                   placeholder={t('auth_files.search_placeholder')}
                 />
@@ -1585,9 +1603,11 @@ export function AuthFilesPage() {
                   value={problemOnly ? 'problem' : noIssueOnly ? 'no-issue' : 'all'}
                   options={issueFilterOptions}
                   onChange={(value) => {
-                    setProblemOnly(value === 'problem');
-                    setNoIssueOnly(value === 'no-issue');
-                    setPage(1);
+                    const current = problemOnly ? 'problem' : noIssueOnly ? 'no-issue' : 'all';
+                    commitFilterChange(value !== current, () => {
+                      setProblemOnly(value === 'problem');
+                      setNoIssueOnly(value === 'no-issue');
+                    });
                   }}
                   ariaLabel={t('auth_files.issue_filter_label')}
                   fullWidth
@@ -1599,9 +1619,11 @@ export function AuthFilesPage() {
                   value={disabledOnly ? 'disabled' : enabledOnly ? 'enabled' : 'all'}
                   options={disabledFilterOptions}
                   onChange={(value) => {
-                    setDisabledOnly(value === 'disabled');
-                    setEnabledOnly(value === 'enabled');
-                    setPage(1);
+                    const current = disabledOnly ? 'disabled' : enabledOnly ? 'enabled' : 'all';
+                    commitFilterChange(value !== current, () => {
+                      setDisabledOnly(value === 'disabled');
+                      setEnabledOnly(value === 'enabled');
+                    });
                   }}
                   ariaLabel={t('auth_files.disabled_filter_label')}
                   fullWidth
@@ -1664,6 +1686,16 @@ export function AuthFilesPage() {
                       </span>
                     }
                   />
+                  <ToggleSwitch
+                    checked={clearSelectionOnFilterChange}
+                    onChange={(value) => setClearSelectionOnFilterChange(value)}
+                    ariaLabel={t('auth_files.clear_selection_on_filter_change_label')}
+                    label={
+                      <span className={styles.filterToggleLabel}>
+                        {t('auth_files.clear_selection_on_filter_change_label')}
+                      </span>
+                    }
+                  />
                 </div>
               </div>
             </div>
@@ -1701,8 +1733,9 @@ export function AuthFilesPage() {
                     value={runtimeFilter}
                     options={runtimeFilterOptions}
                     onChange={(value) => {
-                      setRuntimeFilter(value as RuntimeFilter);
-                      setPage(1);
+                      commitFilterChange(value !== runtimeFilter, () => {
+                        setRuntimeFilter(value as RuntimeFilter);
+                      });
                     }}
                     ariaLabel={t('auth_files.runtime_filter_label')}
                     fullWidth
@@ -1714,8 +1747,9 @@ export function AuthFilesPage() {
                     value={authIndexFilter}
                     options={ternaryFilterOptions}
                     onChange={(value) => {
-                      setAuthIndexFilter(value as TernaryFilter);
-                      setPage(1);
+                      commitFilterChange(value !== authIndexFilter, () => {
+                        setAuthIndexFilter(value as TernaryFilter);
+                      });
                     }}
                     ariaLabel={t('auth_files.auth_index_filter_label')}
                     fullWidth
@@ -1727,8 +1761,9 @@ export function AuthFilesPage() {
                     value={priorityFilter}
                     options={ternaryFilterOptions}
                     onChange={(value) => {
-                      setPriorityFilter(value as TernaryFilter);
-                      setPage(1);
+                      commitFilterChange(value !== priorityFilter, () => {
+                        setPriorityFilter(value as TernaryFilter);
+                      });
                     }}
                     ariaLabel={t('auth_files.priority_filter_label')}
                     fullWidth
@@ -1740,8 +1775,9 @@ export function AuthFilesPage() {
                     value={noteFilter}
                     options={ternaryFilterOptions}
                     onChange={(value) => {
-                      setNoteFilter(value as TernaryFilter);
-                      setPage(1);
+                      commitFilterChange(value !== noteFilter, () => {
+                        setNoteFilter(value as TernaryFilter);
+                      });
                     }}
                     ariaLabel={t('auth_files.note_filter_label')}
                     fullWidth
@@ -1753,8 +1789,9 @@ export function AuthFilesPage() {
                     value={prefixFilter}
                     options={ternaryFilterOptions}
                     onChange={(value) => {
-                      setPrefixFilter(value as TernaryFilter);
-                      setPage(1);
+                      commitFilterChange(value !== prefixFilter, () => {
+                        setPrefixFilter(value as TernaryFilter);
+                      });
                     }}
                     ariaLabel={t('auth_files.prefix_filter_label')}
                     fullWidth
@@ -1766,8 +1803,9 @@ export function AuthFilesPage() {
                     value={proxyFilter}
                     options={ternaryFilterOptions}
                     onChange={(value) => {
-                      setProxyFilter(value as TernaryFilter);
-                      setPage(1);
+                      commitFilterChange(value !== proxyFilter, () => {
+                        setProxyFilter(value as TernaryFilter);
+                      });
                     }}
                     ariaLabel={t('auth_files.proxy_filter_label')}
                     fullWidth
@@ -1779,8 +1817,9 @@ export function AuthFilesPage() {
                     value={headersFilter}
                     options={ternaryFilterOptions}
                     onChange={(value) => {
-                      setHeadersFilter(value as TernaryFilter);
-                      setPage(1);
+                      commitFilterChange(value !== headersFilter, () => {
+                        setHeadersFilter(value as TernaryFilter);
+                      });
                     }}
                     ariaLabel={t('auth_files.headers_filter_label')}
                     fullWidth
@@ -1795,8 +1834,8 @@ export function AuthFilesPage() {
                     step={1}
                     value={successMinInput}
                     onChange={(event) => {
-                      setSuccessMinInput(event.currentTarget.value);
-                      setPage(1);
+                      const next = event.currentTarget.value;
+                      commitFilterChange(next !== successMinInput, () => setSuccessMinInput(next));
                     }}
                   />
                 </div>
@@ -1809,8 +1848,8 @@ export function AuthFilesPage() {
                     step={1}
                     value={failureMinInput}
                     onChange={(event) => {
-                      setFailureMinInput(event.currentTarget.value);
-                      setPage(1);
+                      const next = event.currentTarget.value;
+                      commitFilterChange(next !== failureMinInput, () => setFailureMinInput(next));
                     }}
                   />
                 </div>
@@ -1823,8 +1862,8 @@ export function AuthFilesPage() {
                     step={1}
                     value={sizeMinKbInput}
                     onChange={(event) => {
-                      setSizeMinKbInput(event.currentTarget.value);
-                      setPage(1);
+                      const next = event.currentTarget.value;
+                      commitFilterChange(next !== sizeMinKbInput, () => setSizeMinKbInput(next));
                     }}
                   />
                 </div>

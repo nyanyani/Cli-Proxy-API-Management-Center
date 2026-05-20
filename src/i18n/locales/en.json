@@ -552,6 +552,7 @@
     "advanced_filters_expand": "Show filters",
     "advanced_filters_collapse": "Hide filters",
     "compact_mode_label": "Compact mode",
+    "clear_selection_on_filter_change_label": "Clear selection when filters change",
     "sort_label": "Sort",
     "sort_default": "Default",
     "sort_az": "A-Z Name",

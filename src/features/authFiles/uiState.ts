@@ -31,6 +31,7 @@ export type AuthFilesUiState = {
   failureMinInput?: string;
   sizeMinKbInput?: string;
   compactMode?: boolean;
+  clearSelectionOnFilterChange?: boolean;
   search?: string;
   page?: number;
   pageSize?: number;

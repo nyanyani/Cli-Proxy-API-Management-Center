@@ -551,6 +551,7 @@
     "advanced_filters_expand": "Показать фильтры",
     "advanced_filters_collapse": "Скрыть фильтры",
     "compact_mode_label": "Компактный режим",
+    "clear_selection_on_filter_change_label": "Очищать выбор при смене фильтров",
     "sort_label": "Сортировка",
     "sort_default": "По умолчанию",
     "sort_az": "A-Z Имя",

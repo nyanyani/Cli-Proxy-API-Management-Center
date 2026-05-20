@@ -552,6 +552,7 @@
     "advanced_filters_expand": "展开筛选",
     "advanced_filters_collapse": "收起筛选",
     "compact_mode_label": "简略模式",
+    "clear_selection_on_filter_change_label": "筛选条件变更时清空选择",
     "sort_label": "排序",
     "sort_default": "默认",
     "sort_az": "A-Z 名称",
