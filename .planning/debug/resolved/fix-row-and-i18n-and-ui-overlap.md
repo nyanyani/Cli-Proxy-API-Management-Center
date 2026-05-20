@@ -1,11 +1,11 @@
 ---
 slug: fix-row-and-i18n-and-ui-overlap
-status: verifying
+status: resolved
 trigger: user_report
 goal: find_and_fix
 tdd_mode: false
 created: 2026-05-20
-updated: 2026-05-20T00:00:05Z
+updated: 2026-05-20T00:00:07Z
 ---
 
 # Debug Session: fix-row-and-i18n-and-ui-overlap
@@ -20,8 +20,8 @@ reasoning_checkpoint:
     - "AuthFilesPage.module.scss .viewControls uses grid-template-columns: minmax(160px, 1fr) minmax(96px, 120px) minmax(180px, 1fr), while the JSX renders four controls and .filterItem label has white-space: nowrap."
   falsification_test: "After adding the missing keys and widening/constraining the viewControls grid, a repeated locale-key check should report all present, and type/build checks should compile the modified TSX/JSON/SCSS without errors."
   fix_rationale: "Adding the locale keys removes raw fallback-key text; making the view controls a four-column grid with minmax(0, ...) cells and wrapping/contained labels/buttons prevents translated text from overflowing into neighboring controls."
-  blind_spots: "Cannot visually verify against the user's exact backend data in this session; final real-workflow confirmation is still required after self-verification."
-next_action: Run pnpm run type-check, pnpm run lint, and pnpm run build to verify the locale and SCSS changes compile cleanly.
+  blind_spots: "Self-verification could not reproduce the user's exact backend data, but the user confirmed the real Management API-backed workflow is fixed."
+next_action: Archive the resolved debug session, commit the touched fix files, and update the debug knowledge base.
 
 ## Evidence
 
@@ -44,6 +44,10 @@ next_action: Run pnpm run type-check, pnpm run lint, and pnpm run build to verif
   checked: formatting and locale key assertion after fix
   found: Prettier reported touched files unchanged; repeated Node assertion reported all three plan-priority keys present in en, zh-CN, zh-TW, and ru.
   implication: The raw-key half of the bug is fixed at the resource level; proceed to project checks for regressions.
+- timestamp: 2026-05-20T00:00:06Z
+  checked: project verification commands
+  found: pnpm run type-check passed, pnpm run lint passed, and pnpm run build passed. Build emitted two pre-existing mojibake Windows messages saying the system cannot find the specified path, then Vite completed successfully and generated dist/index.html.
+  implication: The targeted locale/SCSS fix compiles, lints, and builds; remaining verification requires the user's backend-backed UI workflow.
 
 ## Investigation Log
 
@@ -53,7 +57,7 @@ next_action: Run pnpm run type-check, pnpm run lint, and pnpm run build to verif
 
 - root_cause: AuthFilesPage rendered three auth_files.plan_priority_* translation keys that were absent from every locale file. The same control row constrained the plan-priority control to a narrow 96-120px grid column and used nowrap labels, so the long raw fallback key could overflow into adjacent controls such as the page-size input.
 - fix: Added plan_priority_order_label, plan_priority_free_first, and plan_priority_plus_team_first translations to en, zh-CN, zh-TW, and ru. Updated AuthFilesPage.module.scss so the view controls have four explicit responsive grid columns and their labels/buttons wrap or stay within their cell instead of overflowing.
-- verification: pending
+- verification: Self-verified with Prettier, direct locale-key assertion, pnpm run type-check, pnpm run lint, and pnpm run build. User confirmed the real Auth Files UI workflow is fixed.
 - files_changed:
   - src/i18n/locales/en.json
   - src/i18n/locales/zh-CN.json

@@ -1068,7 +1068,8 @@ export function AuthFilesPage() {
       copy.sort((a, b) => {
         const pa = parsePriorityValue(a.priority ?? a['priority']) ?? 0;
         const pb = parsePriorityValue(b.priority ?? b['priority']) ?? 0;
-        return pb - pa; // 高优先级排前面
+        if (pa !== pb) return pb - pa;
+        return a.name.localeCompare(b.name);
       });
     }
     return copy;

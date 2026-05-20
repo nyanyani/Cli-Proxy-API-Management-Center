@@ -1,8 +1,8 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Probe all credentials should retry Failed to load resource: the server responded with a status of 502 (Bad Gateway)"
 created: 2026-05-20
-updated: 2026-05-20T00:30:00Z
+updated: 2026-05-20T00:45:00Z
 ---
 
 # Debug Session: probe-all-credentials-retry
@@ -61,5 +61,5 @@ updated: 2026-05-20T00:30:00Z
 
 - root_cause: Probe all credentials sends each credential probe through a single api-call attempt. Transient gateway/server failures (HTTP 502/503/504 from the management endpoint, or 502/503/504 returned as api-call statusCode) are treated as final errors immediately because no retry wrapper exists on the probe path.
 - fix: Added scoped credential-probe retry handling in src/pages/AuthFilesPage.tsx and changed probeCredentials to call requestProbeWithRetry instead of apiCallApi.request directly.
-- verification: Static checks passed: prettier, type-check, lint, and build. Original 502 retry workflow still needs human verification against a real Management API backend.
+- verification: Static checks passed: prettier, type-check, lint, and build. User confirmed the original Probe all credentials transient 502 workflow is fixed in the real Management API environment.
 - files_changed: [src/pages/AuthFilesPage.tsx]

@@ -1,8 +1,8 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: "Plan priority should be the action button to edit auth files, not the sort options"
 created: 2026-05-20
-updated: 2026-05-20T00:00:07Z
+updated: 2026-05-20T00:00:08Z
 ---
 
 # Debug Session: plan-priority-should-be-the-ac
@@ -20,7 +20,7 @@ updated: 2026-05-20T00:00:07Z
 - hypothesis: The original fix was not actually present in the working tree; current AuthFilesPage still rendered the plan-priority toggle next to sort controls and still sorted priority by plan rank first.
 - test: Human verification in the auth files management UI after rebuilding/reloading the current source.
 - expecting: The sort/view controls no longer show a plan-priority order button; selecting Priority sort orders by auth-file `priority` only; priority editing remains available through the auth-file edit/details action.
-- next_action: Ask user to verify the rebuilt UI and confirm whether the original failure is gone.
+- next_action: Archive the resolved debug session, commit the code fix, and update the debug knowledge base.
 - reasoning_checkpoint:
     hypothesis: "User verification still failed because the documented first fix was not actually applied in the current working tree; AuthFilesPage still rendered `auth_files.plan_priority_order_label` beside the sort selector and still ranked priority sorting by `getPlanPriorityRank(...)` before `file.priority`."
     confirming_evidence:
@@ -94,11 +94,26 @@ updated: 2026-05-20T00:00:07Z
   found: `pnpm exec prettier --write src/pages/AuthFilesPage.tsx src/features/authFiles/uiState.ts`, `pnpm run type-check`, `pnpm run lint`, and `pnpm run build` completed successfully. Build still emitted the pre-existing Windows garbled "system cannot find path" messages before Vite, but exited successfully.
   implication: Static verification passes; final confirmation requires user/browser workflow verification with rebuilt UI, because stale served artifacts could still show the old control.
 
+- timestamp: 2026-05-20T00:00:08Z
+  checked: human verification after second fix
+  found: User reported "Confirmed fixed" for the rebuilt/live auth files UI.
+  implication: The original issue is resolved end-to-end and the debug session can be archived.
+
+- timestamp: 2026-05-20T00:00:09Z
+  checked: stale locale keys before archive
+  found: Unused `plan_priority_*` locale keys still existed in all locale JSON files even though the source-level control was gone; removed those stale keys.
+  implication: The source tree now matches the intended cleanup: no implementation or locale surface remains for the removed plan-priority sort/order control.
+
+- timestamp: 2026-05-20T00:00:10Z
+  checked: post-locale-cleanup validation
+  found: Stale identifier search found no `planPriority`, `PlanPriority`, `plan_priority`, `getPlanPriorityRank`, `AUTH_FILES_PLAN_PRIORITY`, or `AuthFilesPlanPriority` matches under `src`; `pnpm run type-check`, `pnpm run lint`, and `pnpm run build` completed successfully.
+  implication: The final source cleanup is statically verified after human confirmation.
+
 ## Eliminated
 
 ## Resolution
 
 - root_cause: AuthFilesPage still had the plan-priority sort/order implementation in live source: `sortMode === 'priority'` ranked by `getPlanPriorityRank(...)` before editable `file.priority`, `planPriorityOrder` was persisted in UI state, and a plan-priority button was rendered beside the sort selector. The previous debug note claimed this was removed, but current working-tree evidence showed it was not.
-- fix: Removed the live plan-priority order type/state/persistence/toggle UI from AuthFilesPage and uiState, and restored priority sort to use only the auth-file `priority` value that is edited through Auth File Details / Edit.
-- verification: Self-verified with stale identifier search, Prettier on touched source files, `pnpm run type-check`, `pnpm run lint`, and `pnpm run build`. Awaiting human verification in the rebuilt auth files UI.
-- files_changed: [src/pages/AuthFilesPage.tsx, src/features/authFiles/uiState.ts]
+- fix: Removed the live plan-priority order type/state/persistence/toggle UI from AuthFilesPage and uiState, restored priority sort to use only the auth-file `priority` value that is edited through Auth File Details / Edit, and removed stale `plan_priority_*` locale keys.
+- verification: Self-verified with stale identifier search, Prettier on touched source files, `pnpm run type-check`, `pnpm run lint`, and `pnpm run build`; user then confirmed the rebuilt/live auth files UI is fixed; repeated stale identifier search/type-check/lint/build after removing stale locale keys.
+- files_changed: [src/pages/AuthFilesPage.tsx, src/features/authFiles/uiState.ts, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json]
