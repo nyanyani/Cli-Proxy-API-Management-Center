@@ -75,3 +75,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Added a post-quota-refresh persistence step in AuthFilesPage that writes compact probe_quota metadata plus top-level plan_type/tier_id/tier_label/credit_balance fields into each successful auth file JSON via authFilesApi.downloadJsonObject/saveJsonObject. Also changed Gemini CLI quota fetching to await loadCodeAssist tier metadata before returning the success state. Added probe_quota readback so resolvePlanTypeForFile checks persisted probe_quota metadata/data, AuthFilesPage quota-state lookup falls back to probe_quota.data after reload, and AuthFileQuotaSection displays persisted probe quota data when useQuotaStore is empty.
 - **Files changed:** src/pages/AuthFilesPage.tsx, src/components/quota/quotaConfigs.ts, src/features/authFiles/components/AuthFileQuotaSection.tsx
 ---
+
+## auth-file-plan-filter — Auth file JSON leaked probe metadata and plan filter missed downloaded plan_type
+- **Date:** 2026-05-20
+- **Error patterns:** Auth file JSON, probe_quota, Advanced filter, Plan type, No detected plan, Codex, plan_type free, list summary
+- **Root cause:** Two separate auth-file JSON boundary issues were present. First, user-facing auth-file JSON paths reused raw backend auth-file records, so UI-internal `probe_quota` metadata leaked into download/export and editor JSON display. Second, Advanced Plan type filtering operates on `/auth-files` list-summary rows; those rows can omit persisted raw auth JSON fields such as top-level `plan_type`, so a downloaded Codex auth record with `plan_type: "free"` could still be categorized as `No detected plan` because the filter never received that field.
+- **Fix:** Added a shallow auth-file public JSON sanitizer that omits `probe_quota`; used it for single/batch downloads and prefix/proxy editor JSON display/preview while keeping probe metadata persistence writes unchanged. Added list-row enrichment that copies only whitelisted non-secret plan/quota metadata from raw auth JSON into `/auth-files` list items when the list summary lacks plan metadata.
+- **Files changed:** src/services/api/authFiles.ts, src/features/authFiles/hooks/useAuthFilesData.ts, src/features/authFiles/hooks/useAuthFilesPrefixProxyEditor.ts
+---
