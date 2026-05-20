@@ -2,7 +2,7 @@
 status: investigating
 trigger: "i selected the No detected plan and probe the selected, but when the process finished, their still auth files left"
 created: 2026-05-20
-updated: 2026-05-20T09:10:11Z
+updated: 2026-05-20T09:15:00Z
 ---
 
 # Debug Session: i-selected-the-no-detected-pla
@@ -20,14 +20,19 @@ DATA_END
 
 ## Current Focus
 
-- hypothesis:
-- test:
-- expecting:
-- next_action: gather initial evidence
+- hypothesis: Auth file list/filter state is not being refreshed or re-filtered after probe selected updates detected plan metadata.
+- test: Read auth-files feature state, filtering, and probe-selected implementations to trace where detected plan is stored and how the No detected plan filter derives its list.
+- expecting: If true, the probe completion path updates cache/probe state but not the auth file record/plan index used by the active plan filter, or fails to invalidate/refetch after probing.
+- next_action: read knowledge base and relevant auth file feature/service/store files that mention plan filtering or probing
 - reasoning_checkpoint:
 - tdd_checkpoint:
 
 ## Evidence
+
+- timestamp: 2026-05-20T09:15:00Z
+  checked: initial repository search for No detected plan/probe selected strings
+  found: UI copy for plan_filter_none and probe_summary exists in locale files; source grep did not directly find English text in feature logic.
+  implication: Need to trace via locale keys and authFiles feature code rather than literal labels.
 
 ## Eliminated
 

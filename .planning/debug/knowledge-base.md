@@ -43,3 +43,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Changed getProbeQuotaConfig in AuthFilesPage to resolve quota config by normalized provider instead of quota-list filterFn, while preserving runtime-only exclusion for Gemini CLI.
 - **Files changed:** src/pages/AuthFilesPage.tsx
 ---
+
+## add-an-option-to-configure-whe — Configurable filter changes clear Auth Files selection
+- **Date:** 2026-05-20
+- **Error patterns:** selected filters change, clear selection, configurable option, Auth Files, filter changes
+- **Root cause:** AuthFilesPage had no configurable state transition for filter changes to clear selected auth files; filter/search handlers were independent direct setters and selection state was managed separately by useAuthFilesData.
+- **Fix:** Added persisted `clearSelectionOnFilterChange` Auth Files UI option, a shared `commitFilterChange` helper that clears selection only when enabled and the filter value changes, wired filter/search handlers through it, and added locale labels.
+- **Files changed:** src/pages/AuthFilesPage.tsx, src/features/authFiles/uiState.ts, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json
+---
