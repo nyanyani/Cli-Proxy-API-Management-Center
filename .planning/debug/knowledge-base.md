@@ -27,3 +27,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Added scoped credential-probe retry handling in src/pages/AuthFilesPage.tsx and changed probeCredentials to call requestProbeWithRetry instead of apiCallApi.request directly.
 - **Files changed:** src/pages/AuthFilesPage.tsx
 ---
+
+## plan-priority-should-be-the-ac — Plan priority was attached to sort controls instead of auth-file edit action
+- **Date:** 2026-05-20
+- **Error patterns:** plan priority, action button, edit auth files, sort options, priority sort, planPriorityOrder
+- **Root cause:** AuthFilesPage still had the plan-priority sort/order implementation in live source: `sortMode === 'priority'` ranked by `getPlanPriorityRank(...)` before editable `file.priority`, `planPriorityOrder` was persisted in UI state, and a plan-priority button was rendered beside the sort selector. The previous debug note claimed this was removed, but current working-tree evidence showed it was not.
+- **Fix:** Removed the live plan-priority order type/state/persistence/toggle UI from AuthFilesPage and uiState, restored priority sort to use only the auth-file `priority` value that is edited through Auth File Details / Edit, and removed stale `plan_priority_*` locale keys.
+- **Files changed:** src/pages/AuthFilesPage.tsx, src/features/authFiles/uiState.ts, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json
+---
