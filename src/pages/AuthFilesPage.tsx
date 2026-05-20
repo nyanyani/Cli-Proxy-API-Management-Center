@@ -58,7 +58,7 @@ import { useAuthFilesOauth } from '@/features/authFiles/hooks/useAuthFilesOauth'
 import { useAuthFilesPrefixProxyEditor } from '@/features/authFiles/hooks/useAuthFilesPrefixProxyEditor';
 import { useAuthFilesStatusBarCache } from '@/features/authFiles/hooks/useAuthFilesStatusBarCache';
 import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api';
-import type { ApiCallRequest } from '@/services/api';
+import type { ApiCallRequest, ApiCallResult } from '@/services/api';
 import {
   isAuthFilesSortMode,
   readAuthFilesUiState,
@@ -82,6 +82,9 @@ const DEFAULT_REGULAR_PAGE_SIZE = DEFAULT_CARD_PAGE_SIZE;
 const DEFAULT_COMPACT_PAGE_SIZE = DEFAULT_CARD_PAGE_SIZE;
 const AUTH_FILE_PROBE_STATE_KEY = 'authFilesPage.probeStatus';
 const PROBE_CONCURRENCY = 4;
+const PROBE_MAX_ATTEMPTS = 3;
+const PROBE_RETRY_DELAYS_MS = [300, 900] as const;
+const PROBE_TRANSIENT_STATUS_CODES = new Set([502, 503, 504]);
 
 type ProbeStatus = 'idle' | 'loading' | 'success' | 'error' | 'skipped';
 
@@ -317,6 +320,39 @@ const buildProbeRequest = (file: AuthFileItem, authIndex: string): ApiCallReques
 
 const getProbeQuotaConfig = (file: AuthFileItem): ProbeQuotaConfig | null => {
   return QUOTA_CONFIGS.find((config) => config.filterFn(file)) ?? null;
+};
+
+const isTransientProbeStatus = (status: number | undefined) =>
+  status !== undefined && PROBE_TRANSIENT_STATUS_CODES.has(status);
+
+const getProbeErrorStatus = (err: unknown): number | undefined => {
+  if (!err || typeof err !== 'object') return undefined;
+  const status = (err as { status?: unknown }).status;
+  return typeof status === 'number' && Number.isFinite(status) ? status : undefined;
+};
+
+const waitForProbeRetry = (delayMs: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
+
+const requestProbeWithRetry = async (request: ApiCallRequest): Promise<ApiCallResult> => {
+  for (let attempt = 1; attempt <= PROBE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await apiCallApi.request(request);
+      if (!isTransientProbeStatus(result.statusCode) || attempt === PROBE_MAX_ATTEMPTS) {
+        return result;
+      }
+    } catch (err: unknown) {
+      if (!isTransientProbeStatus(getProbeErrorStatus(err)) || attempt === PROBE_MAX_ATTEMPTS) {
+        throw err;
+      }
+    }
+
+    await waitForProbeRetry(PROBE_RETRY_DELAYS_MS[attempt - 1] ?? 0);
+  }
+
+  throw new Error('Probe retry exhausted without a result');
 };
 
 const setQuotaForFiles = (config: ProbeQuotaConfig, files: AuthFileItem[]) => {
@@ -1164,7 +1200,7 @@ export function AuthFilesPage() {
             return;
           }
 
-          const result = await apiCallApi.request(request);
+          const result = await requestProbeWithRetry(request);
           const ok = result.statusCode >= 200 && result.statusCode < 300;
           const message = ok ? 'OK' : getApiCallErrorMessage(result);
           if (ok) {
