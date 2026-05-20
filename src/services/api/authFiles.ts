@@ -316,23 +316,144 @@ const pickAuthFilePlanMetadata = (json: Record<string, unknown>): Partial<AuthFi
     return metadata;
   }, {});
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+const parseJsonRecord = (value: string): Record<string, unknown> | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const readAuthFileName = (entry: Record<string, unknown>, fallback = ''): string => {
+  const value = entry.name;
+  if (typeof value === 'string') return value.trim();
+  return fallback.trim();
+};
+
+const readNestedAuthFileRecord = (
+  entry: Record<string, unknown>
+): Record<string, unknown> | null => {
+  const nestedFields = ['json', 'content', 'data', 'value', 'authFile'] as const;
+
+  for (const field of nestedFields) {
+    const value = entry[field];
+    if (isRecord(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = parseJsonRecord(value);
+      if (parsed) return parsed;
+    }
+  }
+
+  return null;
+};
+
+const collectBulkAuthFileMetadata = (
+  result: Map<string, Partial<AuthFileEntry>>,
+  name: string,
+  entry: Record<string, unknown>
+) => {
+  const directMetadata = pickAuthFilePlanMetadata(entry);
+  const nested = readNestedAuthFileRecord(entry);
+  const metadata = {
+    ...(nested ? pickAuthFilePlanMetadata(nested) : {}),
+    ...directMetadata,
+  };
+
+  if (name && Object.keys(metadata).length > 0) {
+    result.set(name, metadata);
+  }
+};
+
+const buildBulkAuthFileMetadataMap = (payload: unknown): Map<string, Partial<AuthFileEntry>> => {
+  const metadataByName = new Map<string, Partial<AuthFileEntry>>();
+
+  const collectArray = (items: unknown[]) => {
+    items.forEach((item) => {
+      if (!isRecord(item)) return;
+      const nested = readNestedAuthFileRecord(item);
+      const name = readAuthFileName(item, nested ? readAuthFileName(nested) : '');
+      collectBulkAuthFileMetadata(metadataByName, name, item);
+    });
+  };
+
+  if (Array.isArray(payload)) {
+    collectArray(payload);
+    return metadataByName;
+  }
+
+  if (!isRecord(payload)) return metadataByName;
+
+  const list = Array.isArray(payload.files)
+    ? payload.files
+    : Array.isArray(payload.items)
+      ? payload.items
+      : null;
+
+  if (list) {
+    collectArray(list);
+    return metadataByName;
+  }
+
+  Object.entries(payload).forEach(([filename, value]) => {
+    const entry = isRecord(value)
+      ? value
+      : typeof value === 'string'
+        ? parseJsonRecord(value)
+        : null;
+    if (!entry) return;
+    const name = readAuthFileName(entry, filename);
+    collectBulkAuthFileMetadata(metadataByName, name, entry);
+  });
+
+  return metadataByName;
+};
+
+const downloadBulkAuthFileMetadata = async (): Promise<Map<string, Partial<AuthFileEntry>>> => {
+  const response = await apiClient.getRaw('/auth-files/download?name=*', {
+    responseType: 'blob',
+  });
+  const blob = response.data as Blob;
+  const text = await blob.text();
+  const parsed = JSON.parse(text) as unknown;
+  return buildBulkAuthFileMetadataMap(parsed);
+};
+
 const enrichAuthFilesWithPlanMetadata = async (
   payload: AuthFilesResponse
 ): Promise<AuthFilesResponse> => {
-  const files = await Promise.all(
-    payload.files.map(async (entry) => {
-      if (hasAuthFilePlanMetadata(entry)) return entry;
-
-      const name = readTextField(entry, 'name');
-      if (!name || isRuntimeOnlyEntry(entry)) return entry;
-
-      const json = await authFilesApi.downloadJsonObject(name);
-      return {
-        ...entry,
-        ...pickAuthFilePlanMetadata(json),
-      };
-    })
+  const missingMetadataNames = new Set(
+    payload.files
+      .filter((entry) => !hasAuthFilePlanMetadata(entry))
+      .filter((entry) => !isRuntimeOnlyEntry(entry))
+      .map((entry) => readTextField(entry, 'name'))
+      .filter(Boolean)
   );
+
+  if (missingMetadataNames.size === 0) return payload;
+
+  const metadataByName = await downloadBulkAuthFileMetadata();
+
+  const files = payload.files.map((entry) => {
+    if (hasAuthFilePlanMetadata(entry)) return entry;
+
+    const name = readTextField(entry, 'name');
+    if (!name || isRuntimeOnlyEntry(entry)) return entry;
+
+    const metadata = metadataByName.get(name);
+    if (!metadata || Object.keys(metadata).length === 0) return entry;
+
+    return {
+      ...entry,
+      ...metadata,
+    };
+  });
 
   return {
     ...payload,
