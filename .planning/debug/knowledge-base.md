@@ -83,3 +83,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Added a shallow auth-file public JSON sanitizer that omits `probe_quota`; used it for single/batch downloads and prefix/proxy editor JSON display/preview while keeping probe metadata persistence writes unchanged. Added list-row enrichment that copies only whitelisted non-secret plan/quota metadata from raw auth JSON into `/auth-files` list items when the list summary lacks plan metadata.
 - **Files changed:** src/services/api/authFiles.ts, src/features/authFiles/hooks/useAuthFilesData.ts, src/features/authFiles/hooks/useAuthFilesPrefixProxyEditor.ts
 ---
+
+## why-only-show-unprobed-credent — Probe filters used a different denominator than auth-file totals
+- **Date:** 2026-05-20
+- **Error patterns:** Only show unprobed credentials, Only show probe-successful credentials, Only show probe-failed credentials, less than 1/3, total count doesn't match, auth files, probe summary
+- **Root cause:** Probe-result filters are a credential-probe partition, not an all-auth-files partition. Probe All only targets files with normalized auth_index/authIndex, but the prior summary/unprobed logic counted every auth file; skipped was also hidden, and the first patch added locale placeholders without passing their interpolation values.
+- **Fix:** Use a shared normalized auth_index predicate for probeable credentials, compute probeSummary total/unprobed from that credential set, exclude files without credentials from the unprobed credential filter, display filesWithoutCredentials separately, and pass all probe summary interpolation values.
+- **Files changed:** src/pages/AuthFilesPage.tsx, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json
+---
