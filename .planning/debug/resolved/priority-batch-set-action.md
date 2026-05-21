@@ -138,6 +138,7 @@ updated: 2026-05-21
 - fix: "Kept the numeric Set priority action, added a batch Clear priority action that sends priority 0 for selected non-runtime auth files, changed batchSetPriority optimistic/success/rollback state so priority 0 deletes the local priority field while failures restore whether priority originally existed, and capped per-file batch mutation requests with runLimitedSettled/BATCH_MUTATION_CONCURRENCY=4 for both batchSetPriority and batchSetStatus. Added localized Clear priority labels."
 - verification: "Self-verified third fix with pnpm exec prettier --write src/features/authFiles/hooks/useAuthFilesData.ts, pnpm run type-check, pnpm run lint, pnpm run build, and source grep confirming no Promise.allSettled remains in useAuthFilesData. User confirmed the real large-selection Management API backend workflow is fixed."
 - files_changed:
+  - src/features/authFiles/hooks/useAuthFilesData.ts
   - src/pages/AuthFilesPage.tsx
   - src/pages/AuthFilesPage.module.scss
   - src/i18n/locales/en.json
