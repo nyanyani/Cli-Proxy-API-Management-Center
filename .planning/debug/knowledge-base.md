@@ -91,3 +91,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Use a shared normalized auth_index predicate for probeable credentials, compute probeSummary total/unprobed from that credential set, exclude files without credentials from the unprobed credential filter, display filesWithoutCredentials separately, and pass all probe summary interpolation values.
 - **Files changed:** src/pages/AuthFilesPage.tsx, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json
 ---
+
+## priority-batch-set-action — Batch priority needed clear semantics and bounded bulk requests
+- **Date:** 2026-05-21
+- **Error patterns:** batch priority, set priority, clear priority, remove priority, priority 0, net::ERR_INSUFFICIENT_RESOURCES, bulk batch action, auth files
+- **Root cause:** Two issues were found in sequence. First, the initial batch priority implementation had no clear-priority path and treated backend deletion signal priority=0 as a real local priority value. After that was fixed, large bulk batch priority still failed because batchSetPriority launched one concurrent PATCH /auth-files/fields request per selected file with Promise.allSettled, causing browser/network resource exhaustion (net::ERR_INSUFFICIENT_RESOURCES) for large selections.
+- **Fix:** Kept the numeric Set priority action, added a batch Clear priority action that sends priority 0 for selected non-runtime auth files, changed batchSetPriority optimistic/success/rollback state so priority 0 deletes the local priority field while failures restore whether priority originally existed, and capped per-file batch mutation requests with runLimitedSettled/BATCH_MUTATION_CONCURRENCY=4 for both batchSetPriority and batchSetStatus. Added localized Clear priority labels.
+- **Files changed:** src/pages/AuthFilesPage.tsx, src/pages/AuthFilesPage.module.scss, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json, src/features/authFiles/hooks/useAuthFilesData.ts
+---
