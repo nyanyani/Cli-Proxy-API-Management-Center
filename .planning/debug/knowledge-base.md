@@ -99,3 +99,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Kept the numeric Set priority action, added a batch Clear priority action that sends priority 0 for selected non-runtime auth files, changed batchSetPriority optimistic/success/rollback state so priority 0 deletes the local priority field while failures restore whether priority originally existed, and capped per-file batch mutation requests with runLimitedSettled/BATCH_MUTATION_CONCURRENCY=4 for both batchSetPriority and batchSetStatus. Added localized Clear priority labels.
 - **Files changed:** src/pages/AuthFilesPage.tsx, src/pages/AuthFilesPage.module.scss, src/i18n/locales/en.json, src/i18n/locales/zh-CN.json, src/i18n/locales/zh-TW.json, src/i18n/locales/ru.json, src/features/authFiles/hooks/useAuthFilesData.ts
 ---
+
+## why-quota-api-call-not-patch — Quota metadata persistence used unsupported fields PATCH for free-plan updates
+- **Date:** 2026-05-21
+- **Error patterns:** quota API call, not patch, auth-files/fields, probe_quota, plan_type free, no fields to update, free plan, batch probe, disabled
+- **Root cause:** Multiple quota refresh/probe paths originally bypassed shared persistence. After those paths were centralized, free-plan metadata still attempted PATCH /auth-files/fields before disabled status handling, but the current backend ignores probe_quota/plan_type/tier_id/tier_label/credit_balance on /auth-files/fields and returns HTTP 400 "no fields to update".
+- **Fix:** Centralized quota metadata persistence across AuthFilesPage probes, QuotaSection/useQuotaLoader, and AuthFileQuotaSection. Free-plan metadata now saves quota metadata through the auth-file JSON upload path, then disables through PATCH /auth-files/status when needed, and returns before PATCH /auth-files/fields. Non-free metadata keeps the PATCH-first compatibility path.
+- **Files changed:** src/utils/quota/parsers.ts, src/components/quota/persistQuotaMetadata.ts, src/components/quota/useQuotaLoader.ts, src/components/quota/QuotaSection.tsx, src/features/authFiles/components/AuthFileQuotaSection.tsx, src/pages/AuthFilesPage.tsx, src/services/api/authFiles.ts
+---
