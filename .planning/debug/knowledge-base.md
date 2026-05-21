@@ -107,3 +107,11 @@ Resolved debug sessions. Used by `gsd-debugger` to surface known-pattern hypothe
 - **Fix:** Centralized quota metadata persistence across AuthFilesPage probes, QuotaSection/useQuotaLoader, and AuthFileQuotaSection. Free-plan metadata now saves quota metadata through the auth-file JSON upload path, then disables through PATCH /auth-files/status when needed, and returns before PATCH /auth-files/fields. Non-free metadata keeps the PATCH-first compatibility path.
 - **Files changed:** src/utils/quota/parsers.ts, src/components/quota/persistQuotaMetadata.ts, src/components/quota/useQuotaLoader.ts, src/components/quota/QuotaSection.tsx, src/features/authFiles/components/AuthFileQuotaSection.tsx, src/pages/AuthFilesPage.tsx, src/services/api/authFiles.ts
 ---
+
+## why-quota-api-call-not-patch-batch-persist — Batch Probe credentials persisted quota only after the full run
+- **Date:** 2026-05-21
+- **Error patterns:** Probe credentials, batch probe, quota metadata, persist after every small batch, waits until all probe requests finish, auth-files/status, auth-files/fields
+- **Root cause:** AuthFilesPage Probe credentials persisted quota metadata only after the full run because refreshQuotaCacheForProbeResults and persistProbeQuotaMetadata were called once after runLimited finished all targets.
+- **Fix:** Refactored AuthFilesPage.probeCredentials so the existing quota refresh and persistProbeQuotaMetadata stage runs inside a loop over PROBE_CONCURRENCY-sized target slices.
+- **Files changed:** src/pages/AuthFilesPage.tsx
+---
