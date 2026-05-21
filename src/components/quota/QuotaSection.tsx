@@ -14,6 +14,7 @@ import { getStatusFromError } from '@/utils/quota';
 import { QuotaCard } from './QuotaCard';
 import type { QuotaStatusState } from './QuotaCard';
 import { useQuotaLoader } from './useQuotaLoader';
+import { persistQuotaMetadataForFile } from './persistQuotaMetadata';
 import type { QuotaConfig } from './quotaConfigs';
 import { useGridColumns } from './useGridColumns';
 import { IconRefreshCw } from '@/components/ui/icons';
@@ -108,6 +109,7 @@ interface QuotaSectionProps<TState extends QuotaStatusState, TData> {
   files: AuthFileItem[];
   loading: boolean;
   disabled: boolean;
+  hideQuotaDetails?: boolean;
 }
 
 export function QuotaSection<TState extends QuotaStatusState, TData>({
@@ -115,6 +117,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
   files,
   loading,
   disabled,
+  hideQuotaDetails = false,
 }: QuotaSectionProps<TState, TData>) {
   const { t } = useTranslation();
   const resolvedTheme: ResolvedTheme = useThemeStore((state) => state.resolvedTheme);
@@ -273,9 +276,16 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
 
       try {
         const data = await config.fetchQuota(file, t);
+        const quotaState = config.buildSuccessState(data);
+        await persistQuotaMetadataForFile(
+          file,
+          config as QuotaConfig<unknown, unknown>,
+          quotaState,
+          Date.now()
+        );
         setQuota((prev) => ({
           ...prev,
-          [file.name]: config.buildSuccessState(data),
+          [file.name]: quotaState,
         }));
         showNotification(t('auth_files.quota_refresh_success', { name: file.name }), 'success');
       } catch (err: unknown) {
@@ -376,6 +386,7 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
                 defaultType={config.type}
                 canRefresh={!disabled && !item.disabled}
                 onRefresh={() => void refreshQuotaForFile(item)}
+                hideQuotaDetails={hideQuotaDetails}
                 renderQuotaItems={config.renderQuotaItems}
               />
             ))}

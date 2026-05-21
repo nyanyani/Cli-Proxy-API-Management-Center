@@ -23,6 +23,11 @@ import {
   KIMI_CONFIG,
   type QuotaConfig,
 } from '@/components/quota';
+import { persistQuotaMetadataForTargets } from '@/components/quota/persistQuotaMetadata';
+import {
+  readPersistedHideQuotaDetails,
+  writePersistedHideQuotaDetails,
+} from '@/components/quota/viewOptions';
 import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -61,17 +66,25 @@ import { apiCallApi, authFilesApi, getApiCallErrorMessage } from '@/services/api
 import type { ApiCallRequest, ApiCallResult } from '@/services/api';
 import {
   isAuthFilesSortMode,
+  isAuthFilesPlanFilter,
   readAuthFilesUiState,
   readPersistedAuthFilesCompactMode,
   writeAuthFilesUiState,
   writePersistedAuthFilesCompactMode,
+  type AuthFilesPlanFilter,
   type AuthFilesSortMode,
 } from '@/features/authFiles/uiState';
 import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';
 import { useQuotaStore } from '@/stores/useQuotaStore';
 import type { AuthFileItem } from '@/types';
 import { normalizeAuthIndex } from '@/utils/authIndex';
-import { getStatusFromError, resolveAuthProvider } from '@/utils/quota';
+import {
+  getStatusFromError,
+  isFreePlanType,
+  normalizePlanType,
+  resolveAuthProvider,
+  resolveCodexPlanType,
+} from '@/utils/quota';
 import styles from './AuthFilesPage.module.scss';
 
 const easePower3Out = (progress: number) => 1 - (1 - progress) ** 4;
@@ -85,6 +98,25 @@ const PROBE_CONCURRENCY = 4;
 const PROBE_MAX_ATTEMPTS = 3;
 const PROBE_RETRY_DELAYS_MS = [300, 900] as const;
 const PROBE_TRANSIENT_STATUS_CODES = new Set([502, 503, 504]);
+const AUTH_FILE_PROBE_QUOTA_KEY = 'probe_quota';
+const DISABLE_LIMIT_REACHED_DEFAULT_INTERVAL_MINUTES = 10;
+const DISABLE_LIMIT_REACHED_MIN_INTERVAL_MINUTES = 1;
+const MINUTE_MS = 60_000;
+const MAX_BROWSER_INTERVAL_MS = 2_147_483_647;
+const DISABLE_LIMIT_REACHED_MAX_INTERVAL_MINUTES = Math.floor(MAX_BROWSER_INTERVAL_MS / MINUTE_MS);
+const DEFAULT_BATCH_PRIORITY = 1000;
+const PLUS_TEAM_PLAN_TYPES = new Set([
+  'plus',
+  'team',
+  'plan_team',
+  'pro',
+  'prolite',
+  'pro-lite',
+  'pro_lite',
+  'plan_pro',
+  'plan_max',
+  'max',
+]);
 
 type ProbeStatus = 'idle' | 'loading' | 'success' | 'error' | 'skipped';
 
@@ -108,8 +140,20 @@ type FailedProbeQuotaTarget = {
   status?: number;
 };
 
+type SuccessfulProbeQuotaTarget = {
+  file: AuthFileItem;
+  config: ProbeQuotaConfig;
+  quotaState: unknown;
+};
+
+type ProbeQuotaRefreshResult = {
+  successfulQuotaTargets: SuccessfulProbeQuotaTarget[];
+  quotaFailures: FailedProbeQuotaTarget[];
+};
+
 type TernaryFilter = 'all' | 'yes' | 'no';
 type RuntimeFilter = 'all' | 'file' | 'runtime';
+type PlanCategory = Exclude<AuthFilesPlanFilter, 'all'>;
 type ProbeFilter =
   | 'all'
   | 'success'
@@ -135,7 +179,13 @@ const readProbeState = (): Record<string, AuthFileProbeState> => {
     const raw = window.localStorage.getItem(AUTH_FILE_PROBE_STATE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, AuthFileProbeState>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, state]) =>
+        ['success', 'error', 'skipped'].includes(state?.status)
+      )
+    );
   } catch {
     return {};
   }
@@ -157,6 +207,94 @@ const hasHeadersField = (file: AuthFileItem) => {
   return Boolean(headers && typeof headers === 'object' && Object.keys(headers).length > 0);
 };
 
+const getProbeAuthIndex = (file: AuthFileItem) =>
+  normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
+
+const isProbeableCredential = (file: AuthFileItem) => getProbeAuthIndex(file) !== null;
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const readPersistentProbeQuotaMetadata = (file: AuthFileItem): Record<string, unknown> | null =>
+  asRecord(file[AUTH_FILE_PROBE_QUOTA_KEY]);
+
+const readPersistentProbeQuotaData = (file: AuthFileItem): Record<string, unknown> | null => {
+  const metadata = readPersistentProbeQuotaMetadata(file);
+  return asRecord(metadata?.data);
+};
+
+const buildPersistentProbeQuotaState = (
+  file: AuthFileItem
+): Record<string, unknown> | undefined => {
+  const data = readPersistentProbeQuotaData(file);
+  return data ? { status: 'success', ...data } : undefined;
+};
+
+const resolvePlanTypeForFile = (file: AuthFileItem, quotaState: unknown): string | null => {
+  const quotaRecord = asRecord(quotaState);
+  const metadata = asRecord(file.metadata);
+  const attributes = asRecord(file.attributes);
+  const probeQuotaMetadata = readPersistentProbeQuotaMetadata(file);
+  const probeQuotaData = asRecord(probeQuotaMetadata?.data);
+  const candidates = [
+    quotaRecord?.planType,
+    quotaRecord?.plan_type,
+    quotaRecord?.plan,
+    quotaRecord?.tierId,
+    quotaRecord?.tier_id,
+    resolveCodexPlanType(file),
+    file.plan,
+    file.plan_type,
+    file.planType,
+    file['plan_type'],
+    file['planType'],
+    file.tier_id,
+    file.tierId,
+    file['tier_id'],
+    file['tierId'],
+    metadata?.plan,
+    metadata?.plan_type,
+    metadata?.planType,
+    metadata?.tier_id,
+    metadata?.tierId,
+    attributes?.plan,
+    attributes?.plan_type,
+    attributes?.planType,
+    attributes?.tier_id,
+    attributes?.tierId,
+    probeQuotaMetadata?.plan,
+    probeQuotaMetadata?.plan_type,
+    probeQuotaMetadata?.planType,
+    probeQuotaMetadata?.tier_id,
+    probeQuotaMetadata?.tierId,
+    probeQuotaData?.plan,
+    probeQuotaData?.plan_type,
+    probeQuotaData?.planType,
+    probeQuotaData?.tier_id,
+    probeQuotaData?.tierId,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizePlanType(candidate);
+    if (normalized) return normalized;
+  }
+
+  return null;
+};
+
+const getPlanCategoryForFile = (file: AuthFileItem, quotaState: unknown): PlanCategory => {
+  const planType = resolvePlanTypeForFile(file, quotaState);
+  if (planType === null) return 'none';
+  if (isFreePlanType(planType)) return 'free';
+  if (PLUS_TEAM_PLAN_TYPES.has(planType)) return 'plus-team';
+  return 'other';
+};
+
+const matchesPlanFilter = (filter: AuthFilesPlanFilter, file: AuthFileItem, quotaState: unknown) =>
+  filter === 'all' || getPlanCategoryForFile(file, quotaState) === filter;
+
 const matchesTernary = (filter: TernaryFilter, value: boolean) =>
   filter === 'all' || (filter === 'yes' ? value : !value);
 
@@ -176,10 +314,53 @@ const getUsageLimitText = (value: unknown, seen = new WeakSet<object>()): string
     .join(' ');
 };
 
+const normalizeUsageLimitKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const readBooleanLike = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return null;
+};
+
+const isRateLimitObjectKey = (key: string) => normalizeUsageLimitKey(key).endsWith('ratelimit');
+
+const hasStructuredUsageLimitReached = (
+  value: unknown,
+  parentKey = '',
+  seen = new WeakSet<object>()
+): boolean => {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) {
+    return value.some((item) => hasStructuredUsageLimitReached(item, parentKey, seen));
+  }
+  if (typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+  const usageLimitReached = readBooleanLike(record.usageLimitReached ?? record.usage_limit_reached);
+  if (usageLimitReached === true) return true;
+
+  if (isRateLimitObjectKey(parentKey)) {
+    const limitReached = readBooleanLike(record.limit_reached ?? record.limitReached);
+    const allowed = readBooleanLike(record.allowed);
+    if (limitReached === true || allowed === false) return true;
+  }
+
+  return Object.entries(record).some(([key, item]) =>
+    hasStructuredUsageLimitReached(item, key, seen)
+  );
+};
+
 const hasUsageLimitReached = (value: unknown) => {
   const normalizedMessage = getUsageLimitText(value).toLowerCase();
   return (
+    hasStructuredUsageLimitReached(value) ||
     normalizedMessage.includes('usage_limit_reached') ||
+    normalizedMessage.includes('rate_limit_reached') ||
     normalizedMessage.includes('usage limit has been reached')
   );
 };
@@ -203,6 +384,15 @@ const parseMinNumber = (value: string) => {
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeDisableLimitReachedIntervalMinutes = (value: unknown) => {
+  const parsed = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isFinite(parsed)) return DISABLE_LIMIT_REACHED_DEFAULT_INTERVAL_MINUTES;
+  return Math.min(
+    DISABLE_LIMIT_REACHED_MAX_INTERVAL_MINUTES,
+    Math.max(DISABLE_LIMIT_REACHED_MIN_INTERVAL_MINUTES, Math.round(parsed))
+  );
 };
 
 const readCount = (value: unknown) => {
@@ -324,6 +514,16 @@ const getProbeQuotaConfig = (file: AuthFileItem): ProbeQuotaConfig | null => {
   return null;
 };
 
+const isProbeAbortError = (err: unknown) => {
+  if (!err || typeof err !== 'object') return false;
+  const record = err as { code?: unknown; name?: unknown };
+  return (
+    record.code === 'ERR_CANCELED' ||
+    record.name === 'CanceledError' ||
+    record.name === 'AbortError'
+  );
+};
+
 const isTransientProbeStatus = (status: number | undefined) =>
   status !== undefined && PROBE_TRANSIENT_STATUS_CODES.has(status);
 
@@ -333,25 +533,47 @@ const getProbeErrorStatus = (err: unknown): number | undefined => {
   return typeof status === 'number' && Number.isFinite(status) ? status : undefined;
 };
 
-const waitForProbeRetry = (delayMs: number) =>
-  new Promise<void>((resolve) => {
-    window.setTimeout(resolve, delayMs);
+const waitForProbeRetry = (delayMs: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Probe aborted', 'AbortError'));
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener('abort', handleAbort);
+      resolve();
+    }, delayMs);
+
+    function handleAbort() {
+      window.clearTimeout(timeout);
+      reject(new DOMException('Probe aborted', 'AbortError'));
+    }
+
+    signal.addEventListener('abort', handleAbort, { once: true });
   });
 
-const requestProbeWithRetry = async (request: ApiCallRequest): Promise<ApiCallResult> => {
+const requestProbeWithRetry = async (
+  request: ApiCallRequest,
+  signal: AbortSignal
+): Promise<ApiCallResult> => {
   for (let attempt = 1; attempt <= PROBE_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const result = await apiCallApi.request(request);
+      const result = await apiCallApi.request(request, { signal });
       if (!isTransientProbeStatus(result.statusCode) || attempt === PROBE_MAX_ATTEMPTS) {
         return result;
       }
     } catch (err: unknown) {
-      if (!isTransientProbeStatus(getProbeErrorStatus(err)) || attempt === PROBE_MAX_ATTEMPTS) {
+      if (
+        isProbeAbortError(err) ||
+        !isTransientProbeStatus(getProbeErrorStatus(err)) ||
+        attempt === PROBE_MAX_ATTEMPTS
+      ) {
         throw err;
       }
     }
 
-    await waitForProbeRetry(PROBE_RETRY_DELAYS_MS[attempt - 1] ?? 0);
+    await waitForProbeRetry(PROBE_RETRY_DELAYS_MS[attempt - 1] ?? 0, signal);
   }
 
   throw new Error('Probe retry exhausted without a result');
@@ -386,12 +608,25 @@ const setQuotaResult = (
   }));
 };
 
+const persistProbeQuotaMetadata = async (
+  targets: SuccessfulProbeQuotaTarget[],
+  shouldContinue: () => boolean
+): Promise<FailedProbeQuotaTarget[]> => {
+  return persistQuotaMetadataForTargets(targets, runLimited, {
+    concurrency: PROBE_CONCURRENCY,
+    shouldContinue,
+    unknownErrorMessage: 'Failed to persist probe metadata',
+  });
+};
+
 const refreshQuotaCacheForProbeResults = async (
   successfulTargets: ProbeTarget[],
   failedTargets: FailedProbeQuotaTarget[],
-  t: ReturnType<typeof useTranslation>['t']
-): Promise<FailedProbeQuotaTarget[]> => {
+  t: ReturnType<typeof useTranslation>['t'],
+  shouldContinue: () => boolean = () => true
+): Promise<ProbeQuotaRefreshResult> => {
   const groupedTargets = new Map<ProbeQuotaConfig, AuthFileItem[]>();
+  const successfulQuotaTargets: SuccessfulProbeQuotaTarget[] = [];
   const quotaFailures: FailedProbeQuotaTarget[] = [];
 
   failedTargets.forEach(({ file, message, status }) => {
@@ -413,27 +648,41 @@ const refreshQuotaCacheForProbeResults = async (
     return files.map((file) => ({ config, file }));
   });
 
-  await runLimited(quotaTargets, PROBE_CONCURRENCY, async ({ config, file }) => {
-    try {
-      const data = await config.fetchQuota(file, t);
-      setQuotaResult(config, file, (quotaConfig) => quotaConfig.buildSuccessState(data));
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : t('common.unknown_error');
-      const status = getStatusFromError(err);
-      quotaFailures.push({ file, message, status });
-      setQuotaResult(config, file, (quotaConfig) => quotaConfig.buildErrorState(message, status));
-    }
-  });
+  await runLimited(
+    quotaTargets,
+    PROBE_CONCURRENCY,
+    async ({ config, file }) => {
+      if (!shouldContinue()) return;
 
-  return quotaFailures;
+      try {
+        const data = await config.fetchQuota(file, t);
+        const quotaState = config.buildSuccessState(data);
+        setQuotaResult(config, file, () => quotaState);
+        successfulQuotaTargets.push({ file, config, quotaState });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : t('common.unknown_error');
+        const status = getStatusFromError(err);
+        quotaFailures.push({ file, message, status });
+        setQuotaResult(config, file, (quotaConfig) => quotaConfig.buildErrorState(message, status));
+      }
+    },
+    shouldContinue
+  );
+
+  return { successfulQuotaTargets, quotaFailures };
 };
 
-const runLimited = async <T,>(items: T[], limit: number, worker: (item: T) => Promise<void>) => {
+const runLimited = async <T,>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+  shouldContinue: () => boolean = () => true
+) => {
   let nextIndex = 0;
   const workerCount = Math.min(limit, items.length);
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
+      while (nextIndex < items.length && shouldContinue()) {
         const item = items[nextIndex];
         nextIndex += 1;
         await worker(item);
@@ -459,18 +708,21 @@ export function AuthFilesPage() {
   const [authErrorOnly, setAuthErrorOnly] = useState(false);
   const [probeResultFilter, setProbeResultFilter] = useState<ProbeFilter>('all');
   const [runtimeFilter, setRuntimeFilter] = useState<RuntimeFilter>('all');
+  const [planFilter, setPlanFilter] = useState<AuthFilesPlanFilter>('all');
   const [authIndexFilter, setAuthIndexFilter] = useState<TernaryFilter>('all');
   const [priorityFilter, setPriorityFilter] = useState<TernaryFilter>('all');
   const [noteFilter, setNoteFilter] = useState<TernaryFilter>('all');
   const [prefixFilter, setPrefixFilter] = useState<TernaryFilter>('all');
   const [proxyFilter, setProxyFilter] = useState<TernaryFilter>('all');
   const [headersFilter, setHeadersFilter] = useState<TernaryFilter>('all');
+  const [batchPriorityInput, setBatchPriorityInput] = useState(String(DEFAULT_BATCH_PRIORITY));
   const [successMinInput, setSuccessMinInput] = useState('');
   const [failureMinInput, setFailureMinInput] = useState('');
   const [sizeMinKbInput, setSizeMinKbInput] = useState('');
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [compactMode, setCompactMode] = useState(false);
   const [clearSelectionOnFilterChange, setClearSelectionOnFilterChange] = useState(false);
+  const [hideQuotaDetails, setHideQuotaDetails] = useState(readPersistedHideQuotaDetails);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSizeByMode, setPageSizeByMode] = useState({
@@ -483,7 +735,16 @@ export function AuthFilesPage() {
   const [sortMode, setSortMode] = useState<AuthFilesSortMode>('default');
   const [probeState, setProbeState] = useState<Record<string, AuthFileProbeState>>({});
   const [probeRunning, setProbeRunning] = useState(false);
+  const [probeStopping, setProbeStopping] = useState(false);
   const [probeProgress, setProbeProgress] = useState({ done: 0, total: 0 });
+  const [disableLimitReachedIntervalEnabled, setDisableLimitReachedIntervalEnabled] =
+    useState(false);
+  const [disableLimitReachedIntervalMinutes, setDisableLimitReachedIntervalMinutes] = useState(
+    DISABLE_LIMIT_REACHED_DEFAULT_INTERVAL_MINUTES
+  );
+  const [disableLimitReachedIntervalMinutesInput, setDisableLimitReachedIntervalMinutesInput] =
+    useState(String(DISABLE_LIMIT_REACHED_DEFAULT_INTERVAL_MINUTES));
+  const probeAbortControllerRef = useRef<AbortController | null>(null);
   const [batchActionBarVisible, setBatchActionBarVisible] = useState(false);
   const [uiStateHydrated, setUiStateHydrated] = useState(false);
   const floatingBatchActionsRef = useRef<HTMLDivElement>(null);
@@ -502,6 +763,7 @@ export function AuthFilesPage() {
     deletingAll,
     statusUpdating,
     batchStatusUpdating,
+    batchPriorityUpdating,
     fileInputRef,
     loadFiles,
     handleUploadClick,
@@ -516,6 +778,7 @@ export function AuthFilesPage() {
     deselectAll,
     batchDownload,
     batchSetStatus,
+    batchSetPriority,
     batchDelete,
   } = useAuthFilesData();
   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
@@ -576,11 +839,35 @@ export function AuthFilesPage() {
     : null;
   const pageSize = compactMode ? pageSizeByMode.compact : pageSizeByMode.regular;
 
+  const getQuotaStateForFile = useCallback(
+    (file: AuthFileItem): unknown => {
+      const provider = normalizeProviderKey(resolveAuthProvider(file));
+      if (provider === 'antigravity')
+        return antigravityQuota[file.name] ?? buildPersistentProbeQuotaState(file);
+      if (provider === 'claude')
+        return claudeQuota[file.name] ?? buildPersistentProbeQuotaState(file);
+      if (provider === 'codex')
+        return codexQuota[file.name] ?? buildPersistentProbeQuotaState(file);
+      if (provider === 'gemini-cli')
+        return geminiCliQuota[file.name] ?? buildPersistentProbeQuotaState(file);
+      if (provider === 'kimi') return kimiQuota[file.name] ?? buildPersistentProbeQuotaState(file);
+      return undefined;
+    },
+    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota]
+  );
+
+  useEffect(() => {
+    return () => {
+      probeAbortControllerRef.current?.abort();
+    };
+  }, []);
+
   useEffect(() => {
     const persistedCompactMode = readPersistedAuthFilesCompactMode();
     if (typeof persistedCompactMode === 'boolean') {
       setCompactMode(persistedCompactMode);
     }
+    setHideQuotaDetails(readPersistedHideQuotaDetails());
 
     const persisted = readAuthFilesUiState();
     if (persisted) {
@@ -621,6 +908,9 @@ export function AuthFilesPage() {
       }
       if (persisted.runtimeFilter === 'file' || persisted.runtimeFilter === 'runtime') {
         setRuntimeFilter(persisted.runtimeFilter);
+      }
+      if (isAuthFilesPlanFilter(persisted.planFilter)) {
+        setPlanFilter(persisted.planFilter);
       }
       if (persisted.authIndexFilter === 'yes' || persisted.authIndexFilter === 'no') {
         setAuthIndexFilter(persisted.authIndexFilter);
@@ -680,6 +970,13 @@ export function AuthFilesPage() {
       if (isAuthFilesSortMode(persisted.sortMode)) {
         setSortMode(persisted.sortMode);
       }
+      if (typeof persisted.disableLimitReachedIntervalMinutes === 'number') {
+        const intervalMinutes = normalizeDisableLimitReachedIntervalMinutes(
+          persisted.disableLimitReachedIntervalMinutes
+        );
+        setDisableLimitReachedIntervalMinutes(intervalMinutes);
+        setDisableLimitReachedIntervalMinutesInput(String(intervalMinutes));
+      }
     }
 
     setProbeState(readProbeState());
@@ -698,6 +995,7 @@ export function AuthFilesPage() {
       authErrorOnly,
       probeResultFilter,
       runtimeFilter,
+      planFilter,
       authIndexFilter,
       priorityFilter,
       noteFilter,
@@ -715,22 +1013,27 @@ export function AuthFilesPage() {
       regularPageSize: pageSizeByMode.regular,
       compactPageSize: pageSizeByMode.compact,
       sortMode,
+      disableLimitReachedIntervalMinutes,
     });
     writePersistedAuthFilesCompactMode(compactMode);
+    writePersistedHideQuotaDetails(hideQuotaDetails);
   }, [
     clearSelectionOnFilterChange,
     compactMode,
     disabledOnly,
+    disableLimitReachedIntervalMinutes,
     enabledOnly,
     failureMinInput,
     filter,
     headersFilter,
+    hideQuotaDetails,
     authIndexFilter,
     noteFilter,
     noIssueOnly,
     page,
     pageSize,
     pageSizeByMode,
+    planFilter,
     prefixFilter,
     priorityFilter,
     problemOnly,
@@ -794,6 +1097,37 @@ export function AuthFilesPage() {
     setPage(1);
   };
 
+  const commitDisableLimitReachedIntervalInput = (rawValue: string) => {
+    const trimmed = rawValue.trim();
+    if (!trimmed) {
+      setDisableLimitReachedIntervalMinutesInput(String(disableLimitReachedIntervalMinutes));
+      return;
+    }
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) {
+      setDisableLimitReachedIntervalMinutesInput(String(disableLimitReachedIntervalMinutes));
+      return;
+    }
+
+    const next = normalizeDisableLimitReachedIntervalMinutes(parsed);
+    setDisableLimitReachedIntervalMinutes(next);
+    setDisableLimitReachedIntervalMinutesInput(String(next));
+  };
+
+  const handleDisableLimitReachedIntervalChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const rawValue = event.currentTarget.value;
+    setDisableLimitReachedIntervalMinutesInput(rawValue);
+
+    const trimmed = rawValue.trim();
+    if (!trimmed) return;
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return;
+
+    setDisableLimitReachedIntervalMinutes(normalizeDisableLimitReachedIntervalMinutes(parsed));
+  };
+
   const handleSortModeChange = useCallback(
     (value: string) => {
       if (!isAuthFilesSortMode(value) || value === sortMode) return;
@@ -853,29 +1187,13 @@ export function AuthFilesPage() {
 
     return files.filter((file) => {
       const probe = probeState[file.name];
-      const provider = normalizeProviderKey(resolveAuthProvider(file));
-      const quotaState =
-        provider === 'antigravity'
-          ? antigravityQuota[file.name]
-          : provider === 'claude'
-            ? claudeQuota[file.name]
-            : provider === 'codex'
-              ? codexQuota[file.name]
-              : provider === 'gemini-cli'
-                ? geminiCliQuota[file.name]
-                : provider === 'kimi'
-                  ? kimiQuota[file.name]
-                  : undefined;
+      const quotaState = getQuotaStateForFile(file);
       const isRuntime = isRuntimeOnlyAuthFile(file);
       if (problemOnly && !hasAuthFileStatusMessage(file)) return false;
       if (noIssueOnly && hasAuthFileStatusMessage(file)) return false;
       if (disabledOnly && file.disabled !== true) return false;
       if (enabledOnly && file.disabled === true) return false;
-      if (
-        authErrorOnly &&
-        probeResultFilter === 'all' &&
-        !hasAuthError(file, probe)
-      ) {
+      if (authErrorOnly && probeResultFilter === 'all' && !hasAuthError(file, probe)) {
         return false;
       }
       if (probeResultFilter === 'success' && probe?.status !== 'success') return false;
@@ -891,9 +1209,10 @@ export function AuthFilesPage() {
       )
         return false;
       if (probeResultFilter === 'skipped' && probe?.status !== 'skipped') return false;
-      if (probeResultFilter === 'unprobed' && probe) return false;
+      if (probeResultFilter === 'unprobed' && (!isProbeableCredential(file) || probe)) return false;
       if (runtimeFilter === 'file' && isRuntime) return false;
       if (runtimeFilter === 'runtime' && !isRuntime) return false;
+      if (!matchesPlanFilter(planFilter, file, quotaState)) return false;
       if (
         !matchesTernary(
           authIndexFilter,
@@ -921,18 +1240,15 @@ export function AuthFilesPage() {
   }, [
     authErrorOnly,
     authIndexFilter,
-    antigravityQuota,
-    claudeQuota,
-    codexQuota,
     disabledOnly,
     enabledOnly,
     failureMinInput,
     files,
-    geminiCliQuota,
+    getQuotaStateForFile,
     headersFilter,
-    kimiQuota,
     noteFilter,
     noIssueOnly,
+    planFilter,
     prefixFilter,
     priorityFilter,
     probeResultFilter,
@@ -995,6 +1311,17 @@ export function AuthFilesPage() {
     [t]
   );
 
+  const planFilterOptions = useMemo(
+    () => [
+      { value: 'all', label: t('auth_files.filter_any') },
+      { value: 'free', label: t('auth_files.plan_filter_free') },
+      { value: 'plus-team', label: t('auth_files.plan_filter_plus_team') },
+      { value: 'other', label: t('auth_files.plan_filter_other') },
+      { value: 'none', label: t('auth_files.plan_filter_none') },
+    ],
+    [t]
+  );
+
   const runtimeFilterOptions = useMemo(
     () => [
       { value: 'all', label: t('auth_files.filter_any') },
@@ -1018,6 +1345,7 @@ export function AuthFilesPage() {
     () =>
       [
         runtimeFilter !== 'all',
+        planFilter !== 'all',
         authIndexFilter !== 'all',
         priorityFilter !== 'all',
         noteFilter !== 'all',
@@ -1033,6 +1361,7 @@ export function AuthFilesPage() {
       failureMinInput,
       headersFilter,
       noteFilter,
+      planFilter,
       prefixFilter,
       priorityFilter,
       proxyFilter,
@@ -1114,15 +1443,54 @@ export function AuthFilesPage() {
     [sorted]
   );
   const selectedNames = useMemo(() => Array.from(selectedFiles), [selectedFiles]);
+  const selectedNameSet = useMemo(() => new Set(selectedNames), [selectedNames]);
+  const selectedPriorityTargets = useMemo(
+    () => files.filter((file) => selectedNameSet.has(file.name) && !isRuntimeOnlyAuthFile(file)),
+    [files, selectedNameSet]
+  );
+  const batchPriorityValue = useMemo(
+    () => parsePriorityValue(batchPriorityInput),
+    [batchPriorityInput]
+  );
   const selectedHasStatusUpdating = useMemo(
     () => selectedNames.some((name) => statusUpdating[name] === true),
     [selectedNames, statusUpdating]
   );
+  const batchPriorityButtonsDisabled =
+    disableControls ||
+    selectedPriorityTargets.length === 0 ||
+    batchPriorityValue === undefined ||
+    batchPriorityUpdating ||
+    batchStatusUpdating;
+  const batchPriorityClearDisabled =
+    disableControls ||
+    selectedPriorityTargets.length === 0 ||
+    batchPriorityUpdating ||
+    batchStatusUpdating;
   const batchStatusButtonsDisabled =
     disableControls ||
     selectedNames.length === 0 ||
     batchStatusUpdating ||
     selectedHasStatusUpdating;
+
+  const applyBatchPriority = useCallback(() => {
+    if (batchPriorityValue === undefined) return;
+    void batchSetPriority(
+      selectedPriorityTargets.map((file) => ({
+        name: file.name,
+        priority: batchPriorityValue,
+      }))
+    );
+  }, [batchPriorityValue, batchSetPriority, selectedPriorityTargets]);
+
+  const clearBatchPriority = useCallback(() => {
+    void batchSetPriority(
+      selectedPriorityTargets.map((file) => ({
+        name: file.name,
+        priority: 0,
+      }))
+    );
+  }, [batchSetPriority, selectedPriorityTargets]);
 
   const commitPageInput = (rawValue: string) => {
     const trimmed = rawValue.trim();
@@ -1154,11 +1522,22 @@ export function AuthFilesPage() {
   };
 
   const probeSummary = useMemo(() => {
-    const entries = files.map((file) => probeState[file.name]).filter(Boolean);
+    const probeableFiles = files.filter(isProbeableCredential);
+    const entries = probeableFiles.map((file) => probeState[file.name]).filter(Boolean);
     const authErrors = entries.filter((state) => [401, 403].includes(state.statusCode ?? 0)).length;
     const errors = entries.filter((state) => state.status === 'error').length;
     const success = entries.filter((state) => state.status === 'success').length;
-    return { authErrors, errors, success, checked: entries.length };
+    const skipped = entries.filter((state) => state.status === 'skipped').length;
+    return {
+      authErrors,
+      errors,
+      filesWithoutCredentials: files.length - probeableFiles.length,
+      skipped,
+      success,
+      checked: entries.length,
+      total: probeableFiles.length,
+      unprobed: probeableFiles.length - entries.length,
+    };
   }, [files, probeState]);
 
   const updateProbeState = useCallback(
@@ -1172,111 +1551,203 @@ export function AuthFilesPage() {
     []
   );
 
-  const probeCredentials = useCallback(async (targetNames?: Set<string>) => {
-    if (probeRunning) return;
-
-    setProbeRunning(true);
-    setProbeProgress({ done: 0, total: 0 });
-
-    try {
-      const data = await authFilesApi.list();
-      const targets: ProbeTarget[] = (data.files || [])
-        .filter((file) => !targetNames || targetNames.has(file.name))
-        .map((file) => ({
-          file,
-          authIndex: normalizeAuthIndex(file['auth_index'] ?? file.authIndex),
-        }))
-        .filter((entry): entry is ProbeTarget => Boolean(entry.authIndex));
-
-      setProbeProgress({ done: 0, total: targets.length });
-
-      if (targets.length === 0) {
-        showNotification(t('auth_files.probe_no_targets'), 'warning');
-        return;
-      }
-
+  const markStoppedProbeTargets = useCallback(
+    (targets: ProbeTarget[]) => {
+      const checkedAt = Date.now();
       updateProbeState((prev) => {
         const next = { ...prev };
+        let changed = false;
+
         targets.forEach(({ file }) => {
-          next[file.name] = { status: 'loading', checkedAt: Date.now() };
+          if (next[file.name]?.status !== 'loading') return;
+          next[file.name] = {
+            status: 'skipped',
+            message: t('auth_files.probe_stopped_item'),
+            checkedAt,
+          };
+          changed = true;
         });
-        return next;
+
+        return changed ? next : prev;
       });
+    },
+    [t, updateProbeState]
+  );
 
-      const successfulTargets: ProbeTarget[] = [];
-      const failedTargets: FailedProbeQuotaTarget[] = [];
+  const probeCredentials = useCallback(
+    async (targetNames?: Set<string>) => {
+      if (probeRunning) return;
 
-      await runLimited(targets, PROBE_CONCURRENCY, async ({ file, authIndex }) => {
-        const checkedAt = Date.now();
-        try {
-          const request = buildProbeRequest(file, authIndex);
-          if (!request) {
-            updateProbeState((prev) => ({
-              ...prev,
-              [file.name]: {
-                status: 'skipped',
-                message: `Unsupported provider: ${normalizeProbeProvider(file)}`,
-                checkedAt,
-              },
-            }));
-            return;
-          }
+      const controller = new AbortController();
+      const shouldContinue = () => !controller.signal.aborted;
+      probeAbortControllerRef.current = controller;
 
-          const result = await requestProbeWithRetry(request);
-          const ok = result.statusCode >= 200 && result.statusCode < 300;
-          const message = ok ? 'OK' : getApiCallErrorMessage(result);
-          if (ok) {
-            successfulTargets.push({ file, authIndex });
-          } else {
-            failedTargets.push({ file, message, status: result.statusCode });
-          }
-          updateProbeState((prev) => ({
-            ...prev,
-            [file.name]: {
-              status: ok ? 'success' : 'error',
-              statusCode: result.statusCode,
-              message,
-              checkedAt,
-            },
-          }));
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : t('common.unknown_error');
-          failedTargets.push({ file, message });
-          updateProbeState((prev) => ({
-            ...prev,
-            [file.name]: {
-              status: 'error',
-              message,
-              checkedAt,
-            },
-          }));
-        } finally {
-          setProbeProgress((prev) => ({ ...prev, done: Math.min(prev.total, prev.done + 1) }));
+      setProbeRunning(true);
+      setProbeStopping(false);
+      setProbeProgress({ done: 0, total: 0 });
+
+      try {
+        const data = await authFilesApi.list();
+        if (controller.signal.aborted) {
+          showNotification(t('auth_files.probe_stopped'), 'warning');
+          return;
         }
-      });
 
-      const quotaFailures = await refreshQuotaCacheForProbeResults(successfulTargets, failedTargets, t);
-      if (quotaFailures.length > 0) {
+        const targets: ProbeTarget[] = (data.files || [])
+          .filter((file) => !targetNames || targetNames.has(file.name))
+          .map((file) => ({
+            file,
+            authIndex: getProbeAuthIndex(file),
+          }))
+          .filter((entry): entry is ProbeTarget => Boolean(entry.authIndex));
+
+        setProbeProgress({ done: 0, total: targets.length });
+
+        if (targets.length === 0) {
+          showNotification(t('auth_files.probe_no_targets'), 'warning');
+          return;
+        }
+
         updateProbeState((prev) => {
           const next = { ...prev };
-          quotaFailures.forEach(({ file, message, status }) => {
-            next[file.name] = {
-              status: 'error',
-              statusCode: status,
-              message,
-              checkedAt: Date.now(),
-            };
+          targets.forEach(({ file }) => {
+            next[file.name] = { status: 'loading', checkedAt: Date.now() };
           });
           return next;
         });
-      }
 
-      showNotification(t('auth_files.probe_complete'), 'success');
-      await loadFiles();
-    } finally {
-      setProbeRunning(false);
-    }
-  }, [loadFiles, probeRunning, showNotification, t, updateProbeState]);
+        const successfulTargets: ProbeTarget[] = [];
+        const failedTargets: FailedProbeQuotaTarget[] = [];
+
+        await runLimited(
+          targets,
+          PROBE_CONCURRENCY,
+          async ({ file, authIndex }) => {
+            if (controller.signal.aborted) return;
+
+            const checkedAt = Date.now();
+            try {
+              const request = buildProbeRequest(file, authIndex);
+              if (!request) {
+                updateProbeState((prev) => ({
+                  ...prev,
+                  [file.name]: {
+                    status: 'skipped',
+                    message: `Unsupported provider: ${normalizeProbeProvider(file)}`,
+                    checkedAt,
+                  },
+                }));
+                return;
+              }
+
+              const result = await requestProbeWithRetry(request, controller.signal);
+              if (controller.signal.aborted) return;
+
+              const ok = result.statusCode >= 200 && result.statusCode < 300;
+              const message = ok ? 'OK' : getApiCallErrorMessage(result);
+              if (ok) {
+                successfulTargets.push({ file, authIndex });
+              } else {
+                failedTargets.push({ file, message, status: result.statusCode });
+              }
+              updateProbeState((prev) => ({
+                ...prev,
+                [file.name]: {
+                  status: ok ? 'success' : 'error',
+                  statusCode: result.statusCode,
+                  message,
+                  checkedAt,
+                },
+              }));
+            } catch (err: unknown) {
+              if (controller.signal.aborted || isProbeAbortError(err)) {
+                updateProbeState((prev) => ({
+                  ...prev,
+                  [file.name]: {
+                    status: 'skipped',
+                    message: t('auth_files.probe_stopped_item'),
+                    checkedAt,
+                  },
+                }));
+                return;
+              }
+
+              const message = err instanceof Error ? err.message : t('common.unknown_error');
+              failedTargets.push({ file, message });
+              updateProbeState((prev) => ({
+                ...prev,
+                [file.name]: {
+                  status: 'error',
+                  message,
+                  checkedAt,
+                },
+              }));
+            } finally {
+              setProbeProgress((prev) => ({ ...prev, done: Math.min(prev.total, prev.done + 1) }));
+            }
+          },
+          shouldContinue
+        );
+
+        if (controller.signal.aborted) {
+          markStoppedProbeTargets(targets);
+          showNotification(t('auth_files.probe_stopped'), 'warning');
+          return;
+        }
+
+        const { successfulQuotaTargets, quotaFailures } = await refreshQuotaCacheForProbeResults(
+          successfulTargets,
+          failedTargets,
+          t,
+          shouldContinue
+        );
+
+        if (controller.signal.aborted) {
+          markStoppedProbeTargets(targets);
+          showNotification(t('auth_files.probe_stopped'), 'warning');
+          return;
+        }
+
+        const persistFailures = await persistProbeQuotaMetadata(
+          successfulQuotaTargets,
+          shouldContinue
+        );
+
+        if (controller.signal.aborted) {
+          markStoppedProbeTargets(targets);
+          showNotification(t('auth_files.probe_stopped'), 'warning');
+          return;
+        }
+
+        quotaFailures.push(...persistFailures);
+
+        if (quotaFailures.length > 0) {
+          updateProbeState((prev) => {
+            const next = { ...prev };
+            quotaFailures.forEach(({ file, message, status }) => {
+              next[file.name] = {
+                status: 'error',
+                statusCode: status,
+                message,
+                checkedAt: Date.now(),
+              };
+            });
+            return next;
+          });
+        }
+
+        showNotification(t('auth_files.probe_complete'), 'success');
+        await loadFiles();
+      } finally {
+        if (probeAbortControllerRef.current === controller) {
+          probeAbortControllerRef.current = null;
+        }
+        setProbeStopping(false);
+        setProbeRunning(false);
+      }
+    },
+    [loadFiles, markStoppedProbeTargets, probeRunning, showNotification, t, updateProbeState]
+  );
 
   const handleProbeAllCredentials = useCallback(() => probeCredentials(), [probeCredentials]);
 
@@ -1284,6 +1755,138 @@ export function AuthFilesPage() {
     () => probeCredentials(new Set(selectedNames)),
     [probeCredentials, selectedNames]
   );
+
+  const handleEndProbing = useCallback(() => {
+    const controller = probeAbortControllerRef.current;
+    if (!controller || controller.signal.aborted) return;
+
+    setProbeStopping(true);
+    controller.abort();
+    showNotification(t('auth_files.probe_stopping'), 'warning');
+  }, [showNotification, t]);
+
+  const notifyNoAutomationTargets = useCallback(() => {
+    showNotification(t('auth_files.automation_no_matches'), 'warning');
+  }, [showNotification, t]);
+
+  const getAutomationTargetNames = useCallback(
+    (predicate: (file: AuthFileItem) => boolean) =>
+      sorted.filter((file) => predicate(file)).map((file) => file.name),
+    [sorted]
+  );
+
+  const handleProbeEnabledCredentials = useCallback(() => {
+    const names = getAutomationTargetNames((file) => file.disabled !== true);
+    if (names.length === 0) {
+      notifyNoAutomationTargets();
+      return;
+    }
+
+    void probeCredentials(new Set(names));
+  }, [getAutomationTargetNames, notifyNoAutomationTargets, probeCredentials]);
+
+  const handleProbeDisabledCredentials = useCallback(() => {
+    const names = getAutomationTargetNames((file) => file.disabled === true);
+    if (names.length === 0) {
+      notifyNoAutomationTargets();
+      return;
+    }
+
+    void probeCredentials(new Set(names));
+  }, [getAutomationTargetNames, notifyNoAutomationTargets, probeCredentials]);
+
+  const getLimitReachedTargetNames = useCallback(
+    () =>
+      getAutomationTargetNames((file) => {
+        if (isRuntimeOnlyAuthFile(file) || file.disabled === true) return false;
+
+        const probe = probeState[file.name];
+        const quotaState = getQuotaStateForFile(file);
+        return (
+          hasUsageLimitReached(file) ||
+          hasUsageLimitReached(probe) ||
+          hasUsageLimitReached(quotaState)
+        );
+      }),
+    [getAutomationTargetNames, getQuotaStateForFile, probeState]
+  );
+
+  const runDisableLimitReachedCredentials = useCallback(
+    async (options: { notifyWhenEmpty?: boolean } = {}) => {
+      if (disableControls || batchStatusUpdating || probeRunning) return;
+
+      const names = getLimitReachedTargetNames();
+      if (names.length === 0) {
+        if (options.notifyWhenEmpty !== false) {
+          notifyNoAutomationTargets();
+        }
+        return;
+      }
+
+      await batchSetStatus(names, false);
+    },
+    [
+      batchSetStatus,
+      batchStatusUpdating,
+      disableControls,
+      getLimitReachedTargetNames,
+      notifyNoAutomationTargets,
+      probeRunning,
+    ]
+  );
+
+  const handleDisableLimitReachedCredentials = useCallback(() => {
+    void runDisableLimitReachedCredentials();
+  }, [runDisableLimitReachedCredentials]);
+
+  const handleToggleDisableLimitReachedInterval = useCallback(() => {
+    if (disableLimitReachedIntervalEnabled) {
+      setDisableLimitReachedIntervalEnabled(false);
+      return;
+    }
+
+    setDisableLimitReachedIntervalEnabled(true);
+    void runDisableLimitReachedCredentials();
+  }, [disableLimitReachedIntervalEnabled, runDisableLimitReachedCredentials]);
+
+  const disableLimitReachedIntervalDelayMs = disableLimitReachedIntervalMinutes * MINUTE_MS;
+
+  useInterval(
+    () => {
+      void runDisableLimitReachedCredentials({ notifyWhenEmpty: false });
+    },
+    isCurrentLayer && disableLimitReachedIntervalEnabled && !disableControls
+      ? disableLimitReachedIntervalDelayMs
+      : null
+  );
+
+  const handleEnableResetAuthCredentials = useCallback(() => {
+    const names = getAutomationTargetNames((file) => {
+      if (isRuntimeOnlyAuthFile(file) || file.disabled !== true) return false;
+      return !hasAuthError(file, probeState[file.name]);
+    });
+
+    if (names.length === 0) {
+      notifyNoAutomationTargets();
+      return;
+    }
+
+    void batchSetStatus(names, true);
+  }, [batchSetStatus, getAutomationTargetNames, notifyNoAutomationTargets, probeState]);
+
+  const handleDeleteAuthFailedCredentials = useCallback(() => {
+    const names = getAutomationTargetNames((file) => {
+      if (isRuntimeOnlyAuthFile(file)) return false;
+      return hasAuthError(file, probeState[file.name]);
+    });
+
+    if (names.length === 0) {
+      notifyNoAutomationTargets();
+      return;
+    }
+
+    batchDelete(names);
+  }, [batchDelete, getAutomationTargetNames, notifyNoAutomationTargets, probeState]);
 
   const copyTextWithNotification = useCallback(
     async (text: string) => {
@@ -1517,12 +2120,7 @@ export function AuthFilesPage() {
             >
               {t('auth_files.header_select_filtered')}
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={deselectAll}
-              disabled={selectionCount === 0}
-            >
+            <Button variant="ghost" size="sm" onClick={deselectAll} disabled={selectionCount === 0}>
               {t('auth_files.header_clear_selection')}
             </Button>
             <Button
@@ -1687,6 +2285,16 @@ export function AuthFilesPage() {
                     }
                   />
                   <ToggleSwitch
+                    checked={hideQuotaDetails}
+                    onChange={(value) => setHideQuotaDetails(value)}
+                    ariaLabel={t('common.hide_quota_details')}
+                    label={
+                      <span className={styles.filterToggleLabel}>
+                        {t('common.hide_quota_details')}
+                      </span>
+                    }
+                  />
+                  <ToggleSwitch
                     checked={clearSelectionOnFilterChange}
                     onChange={(value) => setClearSelectionOnFilterChange(value)}
                     ariaLabel={t('auth_files.clear_selection_on_filter_change_label')}
@@ -1738,6 +2346,19 @@ export function AuthFilesPage() {
                       });
                     }}
                     ariaLabel={t('auth_files.runtime_filter_label')}
+                    fullWidth
+                  />
+                </div>
+                <div className={styles.advancedFilterField}>
+                  <label>{t('auth_files.plan_filter_label')}</label>
+                  <Select
+                    value={planFilter}
+                    options={planFilterOptions}
+                    onChange={(value) => {
+                      if (!isAuthFilesPlanFilter(value)) return;
+                      commitFilterChange(value !== planFilter, () => setPlanFilter(value));
+                    }}
+                    ariaLabel={t('auth_files.plan_filter_label')}
                     fullWidth
                   />
                 </div>
@@ -1877,20 +2498,34 @@ export function AuthFilesPage() {
                 <div className={styles.probePanelTitle}>{t('auth_files.probe_panel_label')}</div>
                 <div className={styles.probePanelHint}>{t('auth_files.probe_panel_hint')}</div>
               </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void handleProbeAllCredentials()}
-                disabled={disableControls || probeRunning}
-                loading={probeRunning}
-              >
-                {probeRunning
-                  ? t('auth_files.probe_progress', {
-                      done: probeProgress.done,
-                      total: probeProgress.total,
-                    })
-                  : t('auth_files.probe_all_button')}
-              </Button>
+              <div className={styles.probePanelActions}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleProbeAllCredentials()}
+                  disabled={disableControls || probeRunning}
+                  loading={probeRunning}
+                >
+                  {probeRunning
+                    ? t('auth_files.probe_progress', {
+                        done: probeProgress.done,
+                        total: probeProgress.total,
+                      })
+                    : t('auth_files.probe_all_button')}
+                </Button>
+                {probeRunning && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleEndProbing}
+                    loading={probeStopping}
+                  >
+                    {probeStopping
+                      ? t('auth_files.probe_stopping_button')
+                      : t('auth_files.probe_end_button')}
+                  </Button>
+                )}
+              </div>
             </div>
 
             {(probeRunning || probeSummary.checked > 0) && (
@@ -1903,9 +2538,13 @@ export function AuthFilesPage() {
                       })
                     : t('auth_files.probe_summary', {
                         checked: probeSummary.checked,
+                        filesWithoutCredentials: probeSummary.filesWithoutCredentials,
                         success: probeSummary.success,
                         errors: probeSummary.errors,
                         authErrors: probeSummary.authErrors,
+                        skipped: probeSummary.skipped,
+                        total: probeSummary.total,
+                        unprobed: probeSummary.unprobed,
                       })}
                 </div>
                 {probeRunning && probeProgress.total > 0 && (
@@ -1920,6 +2559,153 @@ export function AuthFilesPage() {
                 )}
               </div>
             )}
+          </div>
+
+          <div className={styles.automationPanel}>
+            <div className={styles.automationPanelHeader}>
+              <div className={styles.automationPanelTitle}>
+                {t('auth_files.automation_panel_label')}
+              </div>
+              <div className={styles.automationPanelHint}>
+                {t('auth_files.automation_panel_hint')}
+              </div>
+            </div>
+            <div className={styles.automationSections}>
+              <section
+                className={styles.automationSection}
+                aria-label={t('auth_files.automation_actions_section_label')}
+              >
+                <div className={styles.automationSectionTitle}>
+                  {t('auth_files.automation_actions_section_label')}
+                </div>
+                <div className={styles.automationActions}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleProbeEnabledCredentials}
+                    disabled={disableControls || probeRunning}
+                    loading={probeRunning}
+                  >
+                    {t('auth_files.automation_probe_enabled')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleProbeDisabledCredentials}
+                    disabled={disableControls || probeRunning}
+                    loading={probeRunning}
+                  >
+                    {t('auth_files.automation_probe_disabled')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleDisableLimitReachedCredentials()}
+                    disabled={disableControls || batchStatusUpdating || probeRunning}
+                  >
+                    {t('auth_files.automation_disable_limit_reached')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleEnableResetAuthCredentials()}
+                    disabled={disableControls || batchStatusUpdating || probeRunning}
+                  >
+                    {t('auth_files.automation_enable_reset_auth')}
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={handleDeleteAuthFailedCredentials}
+                    disabled={disableControls || probeRunning}
+                  >
+                    {t('auth_files.automation_delete_auth_failed')}
+                  </Button>
+                </div>
+              </section>
+              <section
+                className={styles.automationSection}
+                aria-labelledby="auth-files-disable-limit-interval-title"
+                aria-describedby="auth-files-disable-limit-interval-hint"
+              >
+                <div>
+                  <div
+                    id="auth-files-disable-limit-interval-title"
+                    className={styles.automationSectionTitle}
+                  >
+                    {t('auth_files.automation_usage_limit_section_label')}
+                  </div>
+                  <div
+                    id="auth-files-disable-limit-interval-hint"
+                    className={styles.automationPanelHint}
+                  >
+                    {t('auth_files.automation_usage_limit_section_hint')}
+                  </div>
+                </div>
+                <fieldset
+                  className={styles.automationScheduleControls}
+                  aria-labelledby="auth-files-disable-limit-interval-title"
+                  aria-describedby="auth-files-disable-limit-interval-hint auth-files-disable-limit-interval-status"
+                >
+                  <label
+                    className={styles.automationIntervalField}
+                    htmlFor="auth-files-disable-limit-interval-minutes"
+                  >
+                    <span>{t('auth_files.automation_interval_minutes_label')}</span>
+                    <input
+                      id="auth-files-disable-limit-interval-minutes"
+                      className={`${styles.pageSizeSelect} ${styles.automationIntervalInput}`}
+                      type="number"
+                      min={DISABLE_LIMIT_REACHED_MIN_INTERVAL_MINUTES}
+                      max={DISABLE_LIMIT_REACHED_MAX_INTERVAL_MINUTES}
+                      step={1}
+                      value={disableLimitReachedIntervalMinutesInput}
+                      aria-describedby="auth-files-disable-limit-interval-hint auth-files-disable-limit-interval-status"
+                      onChange={handleDisableLimitReachedIntervalChange}
+                      onBlur={(e) => commitDisableLimitReachedIntervalInput(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </label>
+                  <Button
+                    variant={disableLimitReachedIntervalEnabled ? 'primary' : 'secondary'}
+                    size="sm"
+                    onClick={handleToggleDisableLimitReachedInterval}
+                    disabled={disableControls && !disableLimitReachedIntervalEnabled}
+                    aria-pressed={disableLimitReachedIntervalEnabled}
+                  >
+                    {t(
+                      disableLimitReachedIntervalEnabled
+                        ? 'auth_files.automation_disable_limit_reached_interval_stop'
+                        : 'auth_files.automation_disable_limit_reached_interval_start',
+                      { minutes: disableLimitReachedIntervalMinutes }
+                    )}
+                  </Button>
+                  <div
+                    id="auth-files-disable-limit-interval-status"
+                    className={`${styles.automationIntervalStatus} ${
+                      disableLimitReachedIntervalEnabled
+                        ? styles.automationIntervalStatusActive
+                        : ''
+                    }`}
+                    aria-live="polite"
+                  >
+                    <span className={styles.automationIntervalStatusDot} aria-hidden="true" />
+                    <span>
+                      {t(
+                        disableLimitReachedIntervalEnabled
+                          ? 'auth_files.automation_usage_limit_interval_running'
+                          : 'auth_files.automation_usage_limit_interval_stopped',
+                        { minutes: disableLimitReachedIntervalMinutes }
+                      )}
+                    </span>
+                  </div>
+                </fieldset>
+              </section>
+            </div>
           </div>
         </div>
 
@@ -1946,6 +2732,7 @@ export function AuthFilesPage() {
                   deleting={deleting}
                   statusUpdating={statusUpdating}
                   quotaFilterType={quotaFilterType}
+                  hideQuotaDetails={hideQuotaDetails}
                   statusBarCache={statusBarCache}
                   onShowModels={showModels}
                   onDownload={handleDownload}
@@ -2061,10 +2848,14 @@ export function AuthFilesPage() {
         ? createPortal(
             <div className={styles.batchActionContainer} ref={floatingBatchActionsRef}>
               <div className={styles.batchActionBar}>
-                <div className={styles.batchActionLeft}>
+                <div className={styles.batchSelectionSummary}>
+                  <span className={styles.batchSelectionCount}>{selectionCount}</span>
                   <span className={styles.batchSelectionText}>
-                    {t('auth_files.batch_selected', { count: selectionCount })}
+                    {t('auth_files.batch_selected_label')}
                   </span>
+                </div>
+
+                <div className={styles.batchActionGroup}>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -2093,7 +2884,8 @@ export function AuthFilesPage() {
                     {t('auth_files.batch_deselect')}
                   </Button>
                 </div>
-                <div className={styles.batchActionRight}>
+
+                <div className={styles.batchActionGroup}>
                   <Button
                     variant="secondary"
                     size="sm"
@@ -2102,6 +2894,37 @@ export function AuthFilesPage() {
                   >
                     {t('auth_files.batch_download')}
                   </Button>
+                </div>
+
+                <div className={`${styles.batchActionGroup} ${styles.batchPriorityGroup}`}>
+                  <Input
+                    className={styles.batchPriorityInput}
+                    value={batchPriorityInput}
+                    onChange={(event) => setBatchPriorityInput(event.target.value)}
+                    inputMode="numeric"
+                    aria-label={t('auth_files.batch_priority_input_label')}
+                    placeholder={String(DEFAULT_BATCH_PRIORITY)}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={applyBatchPriority}
+                    disabled={batchPriorityButtonsDisabled}
+                    loading={batchPriorityUpdating}
+                  >
+                    {t('auth_files.batch_priority_set')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearBatchPriority}
+                    disabled={batchPriorityClearDisabled}
+                  >
+                    {t('auth_files.batch_priority_clear')}
+                  </Button>
+                </div>
+
+                <div className={`${styles.batchActionGroup} ${styles.batchDangerGroup}`}>
                   <Button
                     size="sm"
                     onClick={() => batchSetStatus(selectedNames, true)}

@@ -6,20 +6,45 @@ import {
   CLAUDE_CONFIG,
   CODEX_CONFIG,
   GEMINI_CLI_CONFIG,
-  KIMI_CONFIG
+  KIMI_CONFIG,
 } from '@/components/quota';
+import type { QuotaConfig } from '@/components/quota';
+import { persistQuotaMetadataForFile } from '@/components/quota/persistQuotaMetadata';
 import { useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { getStatusFromError } from '@/utils/quota';
 import {
   isRuntimeOnlyAuthFile,
+  normalizeProviderKey,
   resolveQuotaErrorMessage,
-  type QuotaProviderType
+  type QuotaProviderType,
 } from '@/features/authFiles/constants';
 import { QuotaProgressBar } from '@/features/authFiles/components/QuotaProgressBar';
 import styles from '@/pages/AuthFilesPage.module.scss';
 
 type QuotaState = { status?: string; error?: string; errorStatus?: number } | undefined;
+
+const AUTH_FILE_PROBE_QUOTA_KEY = 'probe_quota';
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const readPersistentProbeQuotaState = (
+  file: AuthFileItem,
+  quotaType: QuotaProviderType
+): QuotaState => {
+  const metadata = asRecord(file[AUTH_FILE_PROBE_QUOTA_KEY]);
+  if (!metadata) return undefined;
+
+  const provider =
+    typeof metadata.provider === 'string' ? normalizeProviderKey(metadata.provider) : null;
+  if (provider && provider !== quotaType) return undefined;
+
+  const data = asRecord(metadata.data);
+  return data ? { status: 'success', ...data } : undefined;
+};
 
 const getQuotaConfig = (type: QuotaProviderType) => {
   if (type === 'antigravity') return ANTIGRAVITY_CONFIG;
@@ -33,24 +58,28 @@ export type AuthFileQuotaSectionProps = {
   file: AuthFileItem;
   quotaType: QuotaProviderType;
   disableControls: boolean;
+  hideQuotaDetails?: boolean;
 };
 
 export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
-  const { file, quotaType, disableControls } = props;
+  const { file, quotaType, disableControls, hideQuotaDetails = false } = props;
   const { t } = useTranslation();
   const showNotification = useNotificationStore((state) => state.showNotification);
 
-  const quota = useQuotaStore((state) => {
-    if (quotaType === 'antigravity') return state.antigravityQuota[file.name] as QuotaState;
-    if (quotaType === 'claude') return state.claudeQuota[file.name] as QuotaState;
-    if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaState;
-    if (quotaType === 'kimi') return state.kimiQuota[file.name] as QuotaState;
-    return state.geminiCliQuota[file.name] as QuotaState;
-  });
+  const quota =
+    useQuotaStore((state) => {
+      if (quotaType === 'antigravity') return state.antigravityQuota[file.name] as QuotaState;
+      if (quotaType === 'claude') return state.claudeQuota[file.name] as QuotaState;
+      if (quotaType === 'codex') return state.codexQuota[file.name] as QuotaState;
+      if (quotaType === 'kimi') return state.kimiQuota[file.name] as QuotaState;
+      return state.geminiCliQuota[file.name] as QuotaState;
+    }) ?? readPersistentProbeQuotaState(file, quotaType);
 
   const updateQuotaState = useQuotaStore((state) => {
-    if (quotaType === 'antigravity') return state.setAntigravityQuota as unknown as (updater: unknown) => void;
-    if (quotaType === 'claude') return state.setClaudeQuota as unknown as (updater: unknown) => void;
+    if (quotaType === 'antigravity')
+      return state.setAntigravityQuota as unknown as (updater: unknown) => void;
+    if (quotaType === 'claude')
+      return state.setClaudeQuota as unknown as (updater: unknown) => void;
     if (quotaType === 'codex') return state.setCodexQuota as unknown as (updater: unknown) => void;
     if (quotaType === 'kimi') return state.setKimiQuota as unknown as (updater: unknown) => void;
     return state.setGeminiCliQuota as unknown as (updater: unknown) => void;
@@ -73,14 +102,21 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
 
     updateQuotaState((prev: Record<string, unknown>) => ({
       ...prev,
-      [file.name]: config.buildLoadingState()
+      [file.name]: config.buildLoadingState(),
     }));
 
     try {
       const data = await config.fetchQuota(file, t);
+      const quotaState = config.buildSuccessState(data);
+      await persistQuotaMetadataForFile(
+        file,
+        config as QuotaConfig<unknown, unknown>,
+        quotaState,
+        Date.now()
+      );
       updateQuotaState((prev: Record<string, unknown>) => ({
         ...prev,
-        [file.name]: config.buildSuccessState(data)
+        [file.name]: quotaState,
       }));
       showNotification(t('auth_files.quota_refresh_success', { name: file.name }), 'success');
     } catch (err: unknown) {
@@ -88,7 +124,7 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
       const status = getStatusFromError(err);
       updateQuotaState((prev: Record<string, unknown>) => ({
         ...prev,
-        [file.name]: config.buildErrorState(message, status)
+        [file.name]: config.buildErrorState(message, status),
       }));
       showNotification(t('auth_files.quota_refresh_failed', { name: file.name, message }), 'error');
     }
@@ -123,11 +159,15 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
       ) : quotaStatus === 'error' ? (
         <div className={styles.quotaError}>
           {t(`${config.i18nPrefix}.load_failed`, {
-            message: quotaErrorMessage
+            message: quotaErrorMessage,
           })}
         </div>
       ) : quota ? (
-        (config.renderQuotaItems(quota, t, { styles, QuotaProgressBar }) as ReactNode)
+        (config.renderQuotaItems(quota, t, {
+          styles,
+          QuotaProgressBar,
+          hideQuotaDetails,
+        }) as ReactNode)
       ) : (
         <div className={styles.quotaMessage}>{t(`${config.i18nPrefix}.idle`)}</div>
       )}

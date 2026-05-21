@@ -13,9 +13,16 @@ type AuthFileEntry = AuthFilesResponse['files'][number];
 export type AuthFileFieldsPatch = {
   prefix?: string;
   proxy_url?: string;
+  base_url?: string;
   headers?: Record<string, string>;
   priority?: number;
   note?: string;
+  billing_class?: string;
+  probe_quota?: unknown;
+  plan_type?: string;
+  tier_id?: string;
+  tier_label?: string;
+  credit_balance?: number;
 };
 type AuthFileBatchFailure = { name: string; error: string };
 type AuthFileBatchUploadResponse = {

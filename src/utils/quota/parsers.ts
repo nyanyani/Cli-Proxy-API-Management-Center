@@ -2,7 +2,13 @@
  * Normalization and parsing functions for quota data.
  */
 
-import type { ClaudeUsagePayload, CodexUsagePayload, GeminiCliCodeAssistPayload, GeminiCliQuotaPayload, KimiUsagePayload } from '@/types';
+import type {
+  ClaudeUsagePayload,
+  CodexUsagePayload,
+  GeminiCliCodeAssistPayload,
+  GeminiCliQuotaPayload,
+  KimiUsagePayload,
+} from '@/types';
 import { normalizeAuthIndex } from '@/utils/authIndex';
 
 const GEMINI_CLI_MODEL_SUFFIX = '_vertex';
@@ -56,6 +62,13 @@ export function normalizeQuotaFraction(value: unknown): number | null {
 export function normalizePlanType(value: unknown): string | null {
   const normalized = normalizeStringValue(value);
   return normalized ? normalized.toLowerCase() : null;
+}
+
+const FREE_PLAN_TYPES = new Set(['free', 'plan_free', 'free-tier', 'free_tier']);
+
+export function isFreePlanType(value: unknown): boolean {
+  const normalized = normalizePlanType(value);
+  return normalized !== null && FREE_PLAN_TYPES.has(normalized);
 }
 
 export function decodeBase64UrlPayload(value: string): string | null {
@@ -196,7 +209,9 @@ export function parseGeminiCliQuotaPayload(payload: unknown): GeminiCliQuotaPayl
   return null;
 }
 
-export function parseGeminiCliCodeAssistPayload(payload: unknown): GeminiCliCodeAssistPayload | null {
+export function parseGeminiCliCodeAssistPayload(
+  payload: unknown
+): GeminiCliCodeAssistPayload | null {
   if (payload === undefined || payload === null) return null;
   if (typeof payload === 'string') {
     const trimmed = payload.trim();

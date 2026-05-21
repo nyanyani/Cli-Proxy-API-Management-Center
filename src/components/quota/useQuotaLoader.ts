@@ -8,6 +8,7 @@ import type { AuthFileItem } from '@/types';
 import { useQuotaStore } from '@/stores';
 import { getStatusFromError } from '@/utils/quota';
 import type { QuotaConfig } from './quotaConfigs';
+import { persistQuotaMetadataForFile } from './persistQuotaMetadata';
 
 type QuotaScope = 'page' | 'all';
 
@@ -55,10 +56,17 @@ export function useQuotaLoader<TState, TData>(config: QuotaConfig<TState, TData>
           return nextState;
         });
 
+        const checkedAt = Date.now();
         const results = await Promise.all(
           targets.map(async (file): Promise<LoadQuotaResult<TData>> => {
             try {
               const data = await config.fetchQuota(file, t);
+              await persistQuotaMetadataForFile(
+                file,
+                config as QuotaConfig<unknown, unknown>,
+                config.buildSuccessState(data),
+                checkedAt
+              );
               return { name: file.name, status: 'success', data };
             } catch (err: unknown) {
               const message = err instanceof Error ? err.message : t('common.unknown_error');
