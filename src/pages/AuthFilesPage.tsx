@@ -1616,124 +1616,130 @@ export function AuthFilesPage() {
           return next;
         });
 
-        const successfulTargets: ProbeTarget[] = [];
-        const failedTargets: FailedProbeQuotaTarget[] = [];
+        for (let batchStart = 0; batchStart < targets.length; batchStart += PROBE_CONCURRENCY) {
+          const batchTargets = targets.slice(batchStart, batchStart + PROBE_CONCURRENCY);
+          const successfulTargets: ProbeTarget[] = [];
+          const failedTargets: FailedProbeQuotaTarget[] = [];
 
-        await runLimited(
-          targets,
-          PROBE_CONCURRENCY,
-          async ({ file, authIndex }) => {
-            if (controller.signal.aborted) return;
-
-            const checkedAt = Date.now();
-            try {
-              const request = buildProbeRequest(file, authIndex);
-              if (!request) {
-                updateProbeState((prev) => ({
-                  ...prev,
-                  [file.name]: {
-                    status: 'skipped',
-                    message: `Unsupported provider: ${normalizeProbeProvider(file)}`,
-                    checkedAt,
-                  },
-                }));
-                return;
-              }
-
-              const result = await requestProbeWithRetry(request, controller.signal);
+          await runLimited(
+            batchTargets,
+            PROBE_CONCURRENCY,
+            async ({ file, authIndex }) => {
               if (controller.signal.aborted) return;
 
-              const ok = result.statusCode >= 200 && result.statusCode < 300;
-              const message = ok ? 'OK' : getApiCallErrorMessage(result);
-              if (ok) {
-                successfulTargets.push({ file, authIndex });
-              } else {
-                failedTargets.push({ file, message, status: result.statusCode });
-              }
-              updateProbeState((prev) => ({
-                ...prev,
-                [file.name]: {
-                  status: ok ? 'success' : 'error',
-                  statusCode: result.statusCode,
-                  message,
-                  checkedAt,
-                },
-              }));
-            } catch (err: unknown) {
-              if (controller.signal.aborted || isProbeAbortError(err)) {
+              const checkedAt = Date.now();
+              try {
+                const request = buildProbeRequest(file, authIndex);
+                if (!request) {
+                  updateProbeState((prev) => ({
+                    ...prev,
+                    [file.name]: {
+                      status: 'skipped',
+                      message: `Unsupported provider: ${normalizeProbeProvider(file)}`,
+                      checkedAt,
+                    },
+                  }));
+                  return;
+                }
+
+                const result = await requestProbeWithRetry(request, controller.signal);
+                if (controller.signal.aborted) return;
+
+                const ok = result.statusCode >= 200 && result.statusCode < 300;
+                const message = ok ? 'OK' : getApiCallErrorMessage(result);
+                if (ok) {
+                  successfulTargets.push({ file, authIndex });
+                } else {
+                  failedTargets.push({ file, message, status: result.statusCode });
+                }
                 updateProbeState((prev) => ({
                   ...prev,
                   [file.name]: {
-                    status: 'skipped',
-                    message: t('auth_files.probe_stopped_item'),
+                    status: ok ? 'success' : 'error',
+                    statusCode: result.statusCode,
+                    message,
                     checkedAt,
                   },
                 }));
-                return;
+              } catch (err: unknown) {
+                if (controller.signal.aborted || isProbeAbortError(err)) {
+                  updateProbeState((prev) => ({
+                    ...prev,
+                    [file.name]: {
+                      status: 'skipped',
+                      message: t('auth_files.probe_stopped_item'),
+                      checkedAt,
+                    },
+                  }));
+                  return;
+                }
+
+                const message = err instanceof Error ? err.message : t('common.unknown_error');
+                failedTargets.push({ file, message });
+                updateProbeState((prev) => ({
+                  ...prev,
+                  [file.name]: {
+                    status: 'error',
+                    message,
+                    checkedAt,
+                  },
+                }));
+              } finally {
+                setProbeProgress((prev) => ({
+                  ...prev,
+                  done: Math.min(prev.total, prev.done + 1),
+                }));
               }
+            },
+            shouldContinue
+          );
 
-              const message = err instanceof Error ? err.message : t('common.unknown_error');
-              failedTargets.push({ file, message });
-              updateProbeState((prev) => ({
-                ...prev,
-                [file.name]: {
+          if (controller.signal.aborted) {
+            markStoppedProbeTargets(targets);
+            showNotification(t('auth_files.probe_stopped'), 'warning');
+            return;
+          }
+
+          const { successfulQuotaTargets, quotaFailures } = await refreshQuotaCacheForProbeResults(
+            successfulTargets,
+            failedTargets,
+            t,
+            shouldContinue
+          );
+
+          if (controller.signal.aborted) {
+            markStoppedProbeTargets(targets);
+            showNotification(t('auth_files.probe_stopped'), 'warning');
+            return;
+          }
+
+          const persistFailures = await persistProbeQuotaMetadata(
+            successfulQuotaTargets,
+            shouldContinue
+          );
+
+          if (controller.signal.aborted) {
+            markStoppedProbeTargets(targets);
+            showNotification(t('auth_files.probe_stopped'), 'warning');
+            return;
+          }
+
+          quotaFailures.push(...persistFailures);
+
+          if (quotaFailures.length > 0) {
+            updateProbeState((prev) => {
+              const next = { ...prev };
+              quotaFailures.forEach(({ file, message, status }) => {
+                next[file.name] = {
                   status: 'error',
+                  statusCode: status,
                   message,
-                  checkedAt,
-                },
-              }));
-            } finally {
-              setProbeProgress((prev) => ({ ...prev, done: Math.min(prev.total, prev.done + 1) }));
-            }
-          },
-          shouldContinue
-        );
-
-        if (controller.signal.aborted) {
-          markStoppedProbeTargets(targets);
-          showNotification(t('auth_files.probe_stopped'), 'warning');
-          return;
-        }
-
-        const { successfulQuotaTargets, quotaFailures } = await refreshQuotaCacheForProbeResults(
-          successfulTargets,
-          failedTargets,
-          t,
-          shouldContinue
-        );
-
-        if (controller.signal.aborted) {
-          markStoppedProbeTargets(targets);
-          showNotification(t('auth_files.probe_stopped'), 'warning');
-          return;
-        }
-
-        const persistFailures = await persistProbeQuotaMetadata(
-          successfulQuotaTargets,
-          shouldContinue
-        );
-
-        if (controller.signal.aborted) {
-          markStoppedProbeTargets(targets);
-          showNotification(t('auth_files.probe_stopped'), 'warning');
-          return;
-        }
-
-        quotaFailures.push(...persistFailures);
-
-        if (quotaFailures.length > 0) {
-          updateProbeState((prev) => {
-            const next = { ...prev };
-            quotaFailures.forEach(({ file, message, status }) => {
-              next[file.name] = {
-                status: 'error',
-                statusCode: status,
-                message,
-                checkedAt: Date.now(),
-              };
+                  checkedAt: Date.now(),
+                };
+              });
+              return next;
             });
-            return next;
-          });
+          }
         }
 
         showNotification(t('auth_files.probe_complete'), 'success');
